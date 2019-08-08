@@ -26,6 +26,7 @@ import {getEmptyBlockBody} from "../../chain/genesis/genesis";
 import {ReputationStore} from "../../sync/reputation";
 import {ILogger} from "../../logger";
 import {ISyncRpc} from "../../sync/rpc/interface";
+import { blockToHeader } from "../../chain/stateTransition/util";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface SyncOptions {
@@ -255,13 +256,7 @@ export class SyncRpc implements ISyncRpc {
       ) {
         try {
           const block = await this.db.block.getBlockBySlot(slot);
-          const header: BeaconBlockHeader = {
-            slot: block.slot,
-            parentRoot: block.parentRoot,
-            stateRoot: block.stateRoot,
-            bodyRoot: hashTreeRoot(block.body, this.config.types.BeaconBlockBody),
-            signature: block.signature,
-          };
+          const header: BeaconBlockHeader = blockToHeader(this.config, block);
           response.headers.push(header);
         } catch (e) {
         }

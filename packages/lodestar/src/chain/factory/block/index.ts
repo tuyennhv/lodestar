@@ -11,6 +11,7 @@ import {OpPool} from "../../../opPool";
 import {assembleBody} from "./body";
 import {IEth1Notifier} from "../../../eth1";
 import {stateTransition} from "../../stateTransition";
+import { blockToHeader } from "../../stateTransition/util";
 
 export async function assembleBlock(
   config: IBeaconConfig,
@@ -25,13 +26,7 @@ export async function assembleBlock(
     db.state.getLatest(),
   ]);
   const merkleTree = await db.merkleTree.getProgressiveMerkleTree(currentState.eth1DepositIndex);
-  const parentHeader: BeaconBlockHeader = {
-    stateRoot: parentBlock.stateRoot,
-    signature: parentBlock.signature,
-    slot: parentBlock.slot,
-    parentRoot: parentBlock.parentRoot,
-    bodyRoot: hashTreeRoot(parentBlock.body, config.types.BeaconBlockBody),
-  };
+  const parentHeader: BeaconBlockHeader = blockToHeader(config, parentBlock);
   const block: BeaconBlock = {
     slot,
     parentRoot: signingRoot(parentHeader, config.types.BeaconBlockHeader),

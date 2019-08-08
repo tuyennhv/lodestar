@@ -20,7 +20,7 @@ import {
 } from "./modules";
 import {IEth1Notifier} from "../eth1";
 import {computeEpochOfSlot} from "../chain/stateTransition/util";
-import { blockToHeader } from "../chain/stateTransition/util/block";
+import { blockToHeader } from "../chain/stateTransition/util/blockRoot";
 
 /**
  * Pool of operations not yet included on chain
