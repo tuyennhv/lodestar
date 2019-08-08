@@ -82,6 +82,7 @@ export class BeaconNode {
       logger: this.logger
     });
     this.opPool = new OpPool(this.conf.opPool, {
+      config,
       eth1: this.eth1,
       db: this.db
     });
