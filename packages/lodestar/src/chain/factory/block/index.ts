@@ -11,7 +11,7 @@ import {OpPool} from "../../../opPool";
 import {assembleBody} from "./body";
 import {IEth1Notifier} from "../../../eth1";
 import {stateTransition} from "../../stateTransition";
-import { blockToHeader } from "../../stateTransition/util";
+import {blockToHeader} from "../../stateTransition/util";
 
 export async function assembleBlock(
   config: IBeaconConfig,

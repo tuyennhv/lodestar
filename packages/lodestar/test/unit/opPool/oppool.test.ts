@@ -9,12 +9,13 @@ import {
   ProposerSlashingRepository, TransfersRepository,
   VoluntaryExitRepository
 } from "../../../src/db/api/beacon/repositories";
+import { createIBeaconConfig } from "@chainsafe/eth2.0-config";
 
 
 describe("operation pool", function () {
   let sandbox = sinon.createSandbox();
   let opPool: OpPool;
-  let eth1Stub, dbStub;
+  let eth1Stub, dbStub, configStub;
 
   beforeEach(()=>{
     dbStub = {
@@ -25,7 +26,9 @@ describe("operation pool", function () {
       transfer: sandbox.createStubInstance(TransfersRepository),
     };
     eth1Stub = sandbox.createStubInstance(EthersEth1Notifier);
+    configStub = sandbox.createStubInstance(createIBeaconConfig)
     opPool = new OpPool({}, {
+      config: configStub,
       db: dbStub,
       eth1: eth1Stub
     });

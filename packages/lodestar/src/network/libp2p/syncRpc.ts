@@ -26,7 +26,7 @@ import {getEmptyBlockBody} from "../../chain/genesis/genesis";
 import {ReputationStore} from "../../sync/reputation";
 import {ILogger} from "../../logger";
 import {ISyncRpc} from "../../sync/rpc/interface";
-import { blockToHeader } from "../../chain/stateTransition/util";
+import {blockToHeader} from "../../chain/stateTransition/util";
 
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface SyncOptions {
