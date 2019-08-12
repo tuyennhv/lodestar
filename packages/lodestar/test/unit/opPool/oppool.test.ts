@@ -9,8 +9,7 @@ import {
   ProposerSlashingRepository, TransfersRepository,
   VoluntaryExitRepository
 } from "../../../src/db/api/beacon/repositories";
-import { createIBeaconConfig } from "@chainsafe/eth2.0-config";
-
+import {config} from "@chainsafe/eth2.0-config/lib/presets/mainnet";
 
 describe("operation pool", function () {
   let sandbox = sinon.createSandbox();
@@ -26,9 +25,9 @@ describe("operation pool", function () {
       transfer: sandbox.createStubInstance(TransfersRepository),
     };
     eth1Stub = sandbox.createStubInstance(EthersEth1Notifier);
-    configStub = sandbox.createStubInstance(createIBeaconConfig)
+
     opPool = new OpPool({}, {
-      config: configStub,
+      config,
       db: dbStub,
       eth1: eth1Stub
     });
@@ -45,6 +44,8 @@ describe("operation pool", function () {
   });
 
   it('should do cleanup after block processing', async function () {
+    console.log("STUB", configStub);
+    console.log(configStub)
     const block  = generateEmptyBlock();
     dbStub.deposit.deleteOld.resolves();
     dbStub.voluntaryExit.deleteManyByValue.resolves();

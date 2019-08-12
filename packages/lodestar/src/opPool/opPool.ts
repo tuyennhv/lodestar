@@ -44,6 +44,7 @@ export class OpPool extends EventEmitter {
     this.config = config;
     this.eth1 = eth1;
     this.db = db;
+    this.proposers = new Map;
     this.attestations = new AttestationOperations(this.db.attestation);
     this.voluntaryExits = new VoluntaryExitOperations(this.db.voluntaryExit);
     this.deposits = new DepositsOperations(this.db.deposit);
@@ -83,6 +84,7 @@ export class OpPool extends EventEmitter {
   }
 
   public async checkDuplicateProposer(block: BeaconBlock): Promise<void> {
+    console.log(this)
     const epoch: Epoch = computeEpochOfSlot(this.config, block.slot);
     const proposers: Map<ValidatorIndex, Slot> = this.proposers.get(epoch);
     const state: BeaconState = await this.db.state.getLatest();
