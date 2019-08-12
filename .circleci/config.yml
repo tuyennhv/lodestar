@@ -1,0 +1,43 @@
+version: 2
+jobs:
+  build:
+    working_directory: ~/app
+    machine:
+      image: circleci/classic:latest
+      timezone: Europe/Zagreb
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-docker-{{ .Branch }}
+      - run:
+          name: Load Docker layers cache
+          command: |
+            set +o pipefail
+            docker load -i ~/docker-layers.tar | true
+      - run:
+          name: Build application Docker image
+          command: |
+            export IMAGE_TAG=$CIRCLE_SHA1
+            docker-compose -p chainsafe/lodestar build
+      - run:
+          name: Tag docker image as latest
+          command: |
+            docker tag chainsafe/lodestar:${CIRCLE_SHA1} chainsafe/lodestar:latest
+      - run:
+          name: Push docker image to docker hub
+          command: |
+            docker push chainsafe/lodestar:${CIRCLE_SHA1} chainsafe/lodestar:latest
+      - run:
+          name: Save docker layers cache
+          command: |
+            docker save -o ~/docker-layers.tar chainsafe/lodestar:${CIRCLE_SHA1}
+      - save_cache:
+          key: v1-docker-{{ .Branch }}-{{ epoch }}
+          paths:
+            - ~/docker-layers.tar
+workflows:
+  version: 2
+  build:
+    jobs:
+      - build
