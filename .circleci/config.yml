@@ -19,19 +19,19 @@ jobs:
           name: Build application Docker image
           command: |
             export IMAGE_TAG=$CIRCLE_SHA1
-            docker-compose -p chainsafe/lodestar build
+            docker build -t chainsafe/lodestar:${IMAGE_TAG} -f ./docker/Dockerfile .
       - run:
           name: Tag docker image as latest
           command: |
-            docker tag chainsafe/lodestar:${CIRCLE_SHA1} chainsafe/lodestar:latest
+            docker tag chainsafe/lodestar:${IMAGE_TAG} chainsafe/lodestar:latest
       - run:
           name: Push docker image to docker hub
           command: |
-            docker push chainsafe/lodestar:${CIRCLE_SHA1} chainsafe/lodestar:latest
+            docker push chainsafe/lodestar:${IMAGE_TAG} chainsafe/lodestar:latest
       - run:
           name: Save docker layers cache
           command: |
-            docker save -o ~/docker-layers.tar chainsafe/lodestar:${CIRCLE_SHA1}
+            docker save -o ~/docker-layers.tar chainsafe/lodestar:${IMAGE_TAG}
       - save_cache:
           key: v1-docker-{{ .Branch }}-{{ epoch }}
           paths:

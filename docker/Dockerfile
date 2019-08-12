@@ -10,7 +10,7 @@ COPY package.json .
 COPY packages/lodestar/package.json ./packages/lodestar/package.json
 COPY yarn.lock .
 
-RUN yarn install --frozen-lockfile && node_modules/.bin/lerna bootstrap && yarn cache clean
+RUN yarn config set workspaces-experimental true && yarn install && yarn cache clean
 
 COPY . .
 
