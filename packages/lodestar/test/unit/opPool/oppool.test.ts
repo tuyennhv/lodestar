@@ -1,4 +1,5 @@
 import sinon from "sinon";
+import {describe} from "mocha";
 import {expect} from "chai";
 import {OpPool} from "../../../src/opPool";
 import {generateEmptyBlock} from "../../utils/block";
@@ -7,14 +8,17 @@ import {
   AttesterSlashingRepository,
   DepositRepository,
   ProposerSlashingRepository, TransfersRepository,
-  VoluntaryExitRepository
+  VoluntaryExitRepository,
+  StateRepository
 } from "../../../src/db/api/beacon/repositories";
 import {config} from "@chainsafe/eth2.0-config/lib/presets/mainnet";
+import { generateState } from "../../utils/state";
+import { generateValidators } from "../../utils/validator";
 
 describe("operation pool", function () {
   let sandbox = sinon.createSandbox();
   let opPool: OpPool;
-  let eth1Stub, dbStub, configStub;
+  let eth1Stub, dbStub;
 
   beforeEach(()=>{
     dbStub = {
@@ -23,8 +27,16 @@ describe("operation pool", function () {
       proposerSlashing: sandbox.createStubInstance(ProposerSlashingRepository),
       attesterSlashing: sandbox.createStubInstance(AttesterSlashingRepository),
       transfer: sandbox.createStubInstance(TransfersRepository),
+      state: sandbox.createStubInstance(StateRepository)
     };
     eth1Stub = sandbox.createStubInstance(EthersEth1Notifier);
+
+    // Add to state
+    dbStub.state.getLatest.resolves(generateState(
+      {
+        validators: generateValidators(100, 0)
+      }
+    ));
 
     opPool = new OpPool({}, {
       config,
@@ -44,8 +56,6 @@ describe("operation pool", function () {
   });
 
   it('should do cleanup after block processing', async function () {
-    console.log("STUB", configStub);
-    console.log(configStub)
     const block  = generateEmptyBlock();
     dbStub.deposit.deleteOld.resolves();
     dbStub.voluntaryExit.deleteManyByValue.resolves();
