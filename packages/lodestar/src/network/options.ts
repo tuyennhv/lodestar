@@ -3,6 +3,8 @@ import {IConfigurationModule} from "../util/config";
 
 export interface INetworkOptions {
   maxPeers: number64;
+  //path to peerId file or hex encoded peerId
+  peerId?: string;
   multiaddrs: string[];
   bootnodes: string[];
   rpcTimeout: number64;
@@ -46,6 +48,14 @@ export const NetworkOptions: IConfigurationModule = {
         flag: "multiaddrs"
       }
     },
+    {
+      name: "peerId",
+      type: String,
+      configurable: true,
+      cli: {
+        flag: "peerId"
+      }
+    },
   ]
 };
 
@@ -53,6 +63,7 @@ const config: INetworkOptions = {
   maxPeers: 25,
   multiaddrs: ["/ip4/127.0.0.1/tcp/30606"],
   bootnodes: [],
+  peerId: null,
   rpcTimeout: 5000,
   connectTimeout: 3000,
   disconnectTimeout: 3000,

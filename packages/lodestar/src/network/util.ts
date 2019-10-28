@@ -8,7 +8,9 @@ import PeerInfo from "peer-info";
 import promisify from "promisify-es6";
 import {Shard} from "@chainsafe/eth2.0-types";
 
-import {RequestId, SHARD_SUBNET_COUNT, SHARD_ATTESTATION_TOPIC, BLOCK_TOPIC, ATTESTATION_TOPIC} from "../constants";
+import {ATTESTATION_TOPIC, BLOCK_TOPIC, RequestId, SHARD_ATTESTATION_TOPIC, SHARD_SUBNET_COUNT} from "../constants";
+import fs from "fs";
+import {loadPeerId} from "./nodejs";
 
 // req/resp
 
@@ -56,6 +58,17 @@ export function shardAttestationTopic(shard: Shard): string {
  */
 export async function createPeerInfo(peerId: PeerId): Promise<PeerInfo> {
   return await promisify(PeerInfo.create)(peerId);
+}
+
+export async function initPeerId(peerId?: string): Promise<PeerId> {
+  if(peerId && fs.existsSync(peerId)) {
+  //peerId is path to file
+    return await loadPeerId(peerId);
+  }
+  if(peerId) {
+    return PeerId.createFromB58String(peerId);
+  }
+  return await createPeerId();
 }
 
 /**

@@ -8,59 +8,48 @@ import promisify from "promisify-es6";
 import LibP2p from "libp2p";
 import PeerInfo from "peer-info";
 import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-
 import {ILogger} from "../logger";
 import {IBeaconMetrics} from "../metrics";
-
 import {ReqResp} from "./reqResp";
 import {Gossip} from "./gossip";
-import {INetworkOptions} from "./options";
+import defaultOpts, {INetworkOptions} from "./options";
 import {INetwork, NetworkEventEmitter,} from "./interface";
+import {initializePeerInfo, initPeerId} from "./util";
+import {NodejsNode} from "./nodejs";
+import deepmerge from "deepmerge";
 
-interface ILibp2pModules {
+
+interface INetworkModules {
   config: IBeaconConfig;
-  libp2p: LibP2p;
+  libp2p?: LibP2p;
   logger: ILogger;
   metrics: IBeaconMetrics;
 }
 
 
 export class Libp2pNetwork extends (EventEmitter as { new(): NetworkEventEmitter }) implements INetwork {
-  // @ts-ignore
+
   public peerInfo: PeerInfo;
-  // @ts-ignore
   public reqResp: ReqResp;
-  // @ts-ignore
   public gossip: Gossip;
+  public libp2p: LibP2p | null;
 
   private opts: INetworkOptions;
   private config: IBeaconConfig;
-  // @ts-ignore
-  private libp2p: LibP2p;
-  private inited: Promise<void>;
   private logger: ILogger;
   private metrics: IBeaconMetrics;
 
-  public constructor(opts: INetworkOptions, {config, libp2p, logger, metrics}: ILibp2pModules) {
+  public constructor(opts: Partial<INetworkOptions>, {config, logger, metrics, libp2p}: INetworkModules) {
     super();
-    this.opts = opts;
+    this.opts = deepmerge(defaultOpts, opts);
     this.config = config;
     this.logger = logger;
     this.metrics = metrics;
-    // `libp2p` can be a promise as well as a libp2p object
-    this.inited = new Promise((resolve) => {
-      Promise.resolve(libp2p).then((libp2p) => {
-        this.peerInfo = libp2p.peerInfo;
-        this.libp2p = libp2p;
-        this.reqResp = new ReqResp(opts, {config, libp2p, logger});
-        this.gossip = new Gossip(opts, {config, libp2p, logger}); 
-        resolve();
-      });
-    });
+    this.libp2p = libp2p;
   }
 
   public async start(): Promise<void> {
-    await this.inited;
+    await this.init();
     await promisify(this.libp2p.start.bind(this.libp2p))();
     await this.reqResp.start();
     await this.gossip.start();
@@ -69,7 +58,6 @@ export class Libp2pNetwork extends (EventEmitter as { new(): NetworkEventEmitter
     this.logger.important(`PeerId ${this.libp2p.peerInfo.id.toB58String()}`);
   }
   public async stop(): Promise<void> {
-    await this.inited;
     await this.gossip.stop();
     await this.reqResp.stop();
     await promisify(this.libp2p.stop.bind(this.libp2p))();
@@ -104,4 +92,17 @@ export class Libp2pNetwork extends (EventEmitter as { new(): NetworkEventEmitter
     this.emit("peer:disconnect", peerInfo);
   };
 
+  private async init(): Promise<void> {
+    this.libp2p = this.libp2p || await this.initLibp2p(this.opts);
+    this.reqResp = new ReqResp(this.opts, {config: this.config, libp2p: this.libp2p, logger: this.logger});
+    this.gossip = new Gossip(this.opts, {config: this.config, libp2p: this.libp2p, logger: this.logger});
+  }
+
+  private async initLibp2p(opts: INetworkOptions): Promise<LibP2p> {
+    const peerId = await initPeerId(opts.peerId);
+    const multiaddrs = opts.multiaddrs;
+    const bootnodes = opts.bootnodes;
+    const peerInfo = await initializePeerInfo(peerId, multiaddrs);
+    return new NodejsNode({peerInfo, bootnodes: bootnodes});
+  }
 }

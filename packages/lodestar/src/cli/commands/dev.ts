@@ -6,7 +6,6 @@ import {ICliCommand} from "./interface";
 import {CommanderStatic} from "commander";
 import deepmerge from "deepmerge";
 import fs, {existsSync, mkdirSync} from "fs";
-import PeerId from "peer-id";
 import yaml from "js-yaml";
 import {config as mainnetConfig} from "@chainsafe/eth2.0-config/lib/presets/mainnet";
 import {ILogger, WinstonLogger} from "../../logger";
@@ -22,8 +21,6 @@ import {interopKeypair} from "../../interop/keypairs";
 import {ValidatorApi} from "../../api/rpc/api/validator";
 import {BeaconApi} from "../../api/rpc/api/beacon";
 import {DEPOSIT_CONTRACT_TREE_DEPTH} from "../../constants";
-import {loadPeerId, createLibP2p} from "../../network/nodejs";
-import {createPeerId} from "../../network";
 import {computeEpochOfSlot, computeStartSlotOfEpoch} from "../../chain/stateTransition/util";
 import {getCurrentSlot} from "../../chain/stateTransition/util/genesis";
 import {ProgressiveMerkleTree} from "@chainsafe/eth2.0-utils";
@@ -59,12 +56,13 @@ export class DevCommand implements ICliCommand {
       .option("-t, --genesisTime [genesisTime]", "genesis time of Beacon state", Math.round(Date.now()/1000).toString())
       .option("-c, --validatorCount [validatorCount]", "Number of validator for Beacon state", "8")
       .option("-s, --genesisState [params]", "Start chain from known state")
-      // eslint-disable-next-line max-len
-      .option("-v, --validators [range]", "Start validators, single number - validators 0-number, x,y - validators between x and y", "8")
+      .option(
+        "-v, --validators [range]",
+        "Start validators, single number - validators 0-number, x,y - validators between x and y",
+        "8"
+      )
       .option("-p, --preset [preset]", "Minimal/mainnet", "minimal")
       .option("-r, --resetDb", "Reset the database", true)
-      .option("--peer-id-file [peerIdFile]","peer id json file")
-      .option("--peer-id [peerId]","peer id hex string")
       .option("--validators-from-yaml-key-file [validatorsYamlFile]", "validator keys")
       .action(async (options) => {
         // library is not awaiting this method so don't allow error propagation
@@ -113,29 +111,17 @@ export class DevCommand implements ICliCommand {
         }
       }
     }
-
-    let peerId;
-    if (options["peerId"]) {
-      peerId = PeerId.createFromHexString(options["peerId"]);
-    } else if (options["peerIdFile"]) {
-      peerId = loadPeerId(options["peerId"]);
-    } else {
-      peerId = createPeerId();
-    }
-    const libp2p = await createLibP2p(peerId, conf.network);
     const config = options.preset === "minimal" ? minimalConfig : mainnetConfig;
     const tree = ProgressiveMerkleTree.empty(DEPOSIT_CONTRACT_TREE_DEPTH, new MerkleTreeSerialization(config));
     let state: BeaconState;
     if (options.genesisState) {
       state = quickStartOptionToState(config, tree, options.genesisState);
     } else if (options.genesisTime && options.validatorCount) {
-      logger.info(`Starting node with genesisTime ${new Date(parseInt(options.genesisTime)*1000)} and \
-       ${options.validatorCount} validators.`);
       state = quickStartState(config, tree, parseInt(options.genesisTime), parseInt(options.validatorCount));
     } else {
       throw new Error("Missing either --quickstart or --genesisTime and --validatorCount flag");
     }
-    this.node = new BeaconNode(conf, {config, logger, eth1: new InteropEth1Notifier(), libp2p});
+    this.node = new BeaconNode(conf, {config, logger, eth1: new InteropEth1Notifier()});
     await this.node.chain.initializeBeaconChain(state, tree);
 
     const targetSlot = computeStartSlotOfEpoch(

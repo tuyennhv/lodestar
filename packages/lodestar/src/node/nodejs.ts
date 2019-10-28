@@ -9,7 +9,6 @@ import {BeaconDb, LevelDbController} from "../db";
 import defaultConf, {IBeaconNodeOptions} from "./options";
 import {EthersEth1Notifier, IEth1Notifier} from "../eth1";
 import {INetwork, Libp2pNetwork} from "../network";
-import LibP2p from "libp2p";
 import {isPlainObject} from "@chainsafe/eth2.0-utils";
 import {Sync} from "../sync";
 import {BeaconChain, IBeaconChain} from "../chain";
@@ -29,7 +28,6 @@ interface IBeaconNodeModules {
   config: IBeaconConfig;
   logger: ILogger;
   eth1?: IEth1Notifier;
-  libp2p?: LibP2p;
 }
 
 // TODO move into src/node/beacon
@@ -51,7 +49,7 @@ export class BeaconNode {
   public reps: ReputationStore;
   private logger: ILogger;
 
-  public constructor(opts: Partial<IBeaconNodeOptions>, {config, logger, eth1, libp2p}: IBeaconNodeModules) {
+  public constructor(opts: Partial<IBeaconNodeOptions>, {config, logger, eth1}: IBeaconNodeModules) {
     this.conf = deepmerge(
       defaultConf,
       opts,
@@ -78,7 +76,6 @@ export class BeaconNode {
     });
     this.network = new Libp2pNetwork(this.conf.network, {
       config,
-      libp2p,
       logger: logger.child(this.conf.logger.network),
       metrics: this.metrics,
     });

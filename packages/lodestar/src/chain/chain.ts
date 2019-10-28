@@ -204,7 +204,8 @@ export class BeaconChain extends (EventEmitter as { new(): ChainEventEmitter }) 
   }
 
   public async initializeBeaconChain(genesisState: BeaconState, merkleTree: ProgressiveMerkleTree): Promise<void> {
-    this.logger.info(`Initializing beacon chain with genesisTime ${genesisState.genesisTime}`);
+    this.logger.info(`Initializing beacon chain with genesisTime ${genesisState.genesisTime}`
+        +` and ${genesisState.validators.length} validators`);
     const genesisBlock = getEmptyBlock();
     const stateRoot = hashTreeRoot(genesisState, this.config.types.BeaconState);
     genesisBlock.stateRoot = stateRoot;
