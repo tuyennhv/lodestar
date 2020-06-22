@@ -1,5 +1,5 @@
 import {AbstractApiClient} from "../abstract";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {IValidatorApi} from "../interface/validators";
 import {IBeaconApi} from "../interface/beacon";
 
@@ -11,17 +11,16 @@ export interface IApiClientOverInstanceOpts {
 
 export class ApiClientOverInstance extends AbstractApiClient {
 
-  public url: string = "inmemory";
+  public url = "inmemory";
 
   public beacon: IBeaconApi;
 
   public validator: IValidatorApi;
 
   public constructor(opts: IApiClientOverInstanceOpts) {
-    super();
+    super(opts.config);
     this.beacon = opts.beacon;
     this.validator = opts.validator;
-    this.config = opts.config;
   }
 
   public async connect(): Promise<void> {

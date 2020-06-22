@@ -1,44 +1,55 @@
 # Lodestar
 [![](https://img.shields.io/travis/com/ChainSafe/lodestar/master.svg?label=master&logo=travis "Master Branch (Travis)")](https://travis-ci.com/ChainSafe/lodestar)
 [![Discord](https://img.shields.io/discord/593655374469660673.svg?label=Discord&logo=discord)](https://discord.gg/aMxzVcr)
-![ETH2.0_Spec_Version 0.8.3](https://img.shields.io/badge/ETH2.0_Spec_Version-0.8.3-2e86c1.svg)
+![ETH2.0_Spec_Version 0.11.1](https://img.shields.io/badge/ETH2.0_Spec_Version-0.11.1-2e86c1.svg)
 
-Typescript imlementation of the Eth2.0 beacon chain
+
+## Prerequisites
+
+* [Lerna](https://github.com/lerna/lerna)
+* [Yarn](https://yarnpkg.com/)
 
 ## What you need
-You will need to go over the [specification](https://github.com/ethereum/eth2.0-specs). You will also need to have a [basic understanding of sharding](https://github.com/ethereum/wiki/wiki/Sharding-FAQs). Note that that the specification is an ongoing document and will get outdated. The reference implementation by the Ethereum development team is written in Python and can be found [here](https://github.com/ethereum/beacon_chain).
+You will need to go over the [specification](https://github.com/ethereum/eth2.0-specs). You will also need to have a [basic understanding of sharding](https://github.com/ethereum/wiki/wiki/Sharding-FAQs). 
 
-## Run dev
+## Getting Started
 
-` ./bin/lodestar dev -v 8 -p minimal`
+To get an instance of Lodestar up & running, start a terminal from the root of the this repo:
 
-#### Using start-multi.sh
-
-`sh ./start-multi.sh <number_of_beacon_nodes> <total_validators> <validator_distribution_per_node>`
-`sh ./start-multi.sh 4 8 8,0,0,0`
-
-#### Generating flame graphs from spec tests
-Example of cpu-profile generation of blocksanity tests in current directory
-
-`GEN_PROFILE_DIR=$PWD mocha -r ./.babel-register 'test/spec/sanity/blocks/blocksanity_s_mainnet.test.ts'`
-
-To view results:
-```bash
-npm i -g 0x
-0x --visualize-cpu-profile ./0\ -\ blocksanity-1561705313935.cpuprofile
+1. Install dependencies accross all packages:
 ```
-Open resulting html file in favorite browser.
+yarn install
+```
 
-## Usage
-1. If you haven't `yarn install`
-2. `lerna run build`
-3. `packages/lodestar/./bin/lodestar --help`
+2. Run the build script:
+```
+yarn run build
+```
+
+
+3. Lodestar should now be ready for use:
+```
+yarn run cli --help
+```
 
 Note:
 
 Spec test cases are optional dependency which can be skipped by adding `--ignore-optional` when installing dependencies.
 You can always download spec test cases by running `yarn install --force`.
 
+### Development
+
+#### Connect two beacon nodes
+
+`cd packages/lodestar-cli`
+
+Terminal 1:
+`bin/lodecli dev  --dev.genesisValidators 8 --dev.reset` - It will run beacon node and 8 validators with all the default settings. State will be written to .tmp/state.ssz
+
+Terminal 2:
+`bin/lodecli dev --dev.startValidators 0:0 --chain.genesisStateFile ./dev/genesis.ssz --network.localMultiaddrs /ip4/127.0.0.1/tcp/30607 --sync.minPeers 1` - Will connect to bootnode (node 1 default multiaddrs) and won't start validators.
+
+<!---
 ### Starting private eth1 chain
 
 `./bin/lodestar eth1:dev -m "vast thought differ pull jewel broom cook wrist tribe word before omit"`
@@ -58,3 +69,4 @@ You will see deposit contract address in console if you used `./bin/lodestar eth
 This will trigger 10 deposits to deposit contract which will trigger beacon chain initialization. Make sure to use same mnemonic which you used to start eth1 network.  
 
 **NOTE:** If you'd like to silence the client's logs, set the `LODESTAR_SILENCE` environment variable to `true`.
+-->

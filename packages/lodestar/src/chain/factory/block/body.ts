@@ -2,42 +2,47 @@
  * @module chain/blockAssembly
  */
 
-import {BeaconBlockBody, BeaconState, bytes96} from "@chainsafe/eth2.0-types";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-import {ZERO_HASH} from "../../../constants";
-import {OpPool} from "../../../opPool";
-import {IEth1Notifier} from "../../../eth1";
+import {BeaconBlockBody, BeaconState, Bytes96, Bytes32} from "@chainsafe/lodestar-types";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+
+import {IBeaconDb} from "../../../db";
 import {generateDeposits} from "./deposits";
-import {computeEpochOfSlot} from "@chainsafe/eth2.0-state-transition";
-import {IProgressiveMerkleTree} from "@chainsafe/eth2.0-utils";
+import {getEth1Vote} from "./eth1Vote";
 
 export async function assembleBody(
   config: IBeaconConfig,
-  opPool: OpPool,
-  eth1: IEth1Notifier,
-  merkleTree: IProgressiveMerkleTree,
+  db: IBeaconDb,
   currentState: BeaconState,
-  randao: bytes96
+  randaoReveal: Bytes96,
+  graffiti: Bytes32,
 ): Promise<BeaconBlockBody> {
-  const [proposerSlashings, attesterSlashings, attestations, voluntaryExits, eth1Data] = await Promise.all([
-    opPool.proposerSlashings.getAll().then(value => value.slice(0, config.params.MAX_PROPOSER_SLASHINGS)),
-    opPool.attesterSlashings.getAll().then(value => value.slice(0, config.params.MAX_ATTESTER_SLASHINGS)),
-    opPool.attestations.getValid(currentState).then(value => value.slice(0, config.params.MAX_ATTESTATIONS)),
-    opPool.voluntaryExits.getAll().then(value => value.slice(0, config.params.MAX_VOLUNTARY_EXITS)),
-    eth1.getEth1Data(config, currentState, computeEpochOfSlot(config, currentState.slot))
+  const [
+    proposerSlashings,
+    attesterSlashings,
+    attestations,
+    voluntaryExits,
+    depositDataRootList,
+    eth1Data,
+  ] = await Promise.all([
+    db.proposerSlashing.values({limit: config.params.MAX_PROPOSER_SLASHINGS}),
+    db.attesterSlashing.values({limit: config.params.MAX_ATTESTER_SLASHINGS}),
+    db.aggregateAndProof.getBlockAttestations(currentState)
+      .then(value => value.slice(0, config.params.MAX_ATTESTATIONS)),
+    db.voluntaryExit.values({limit: config.params.MAX_VOLUNTARY_EXITS}),
+    db.depositDataRoot.getTreeBacked(currentState.eth1DepositIndex - 1),
+    getEth1Vote(config, db, currentState),
   ]);
   //requires new eth1 data so it has to be done after above operations
-  const deposits = await generateDeposits(config, opPool, currentState, eth1Data, merkleTree);
-  eth1Data.depositRoot = merkleTree.root();
+  const deposits = await generateDeposits(config, db, currentState, eth1Data, depositDataRootList);
+  eth1Data.depositRoot = depositDataRootList.tree().root;
   return {
-    randaoReveal: randao,
-    eth1Data: eth1Data,
-    graffiti: ZERO_HASH,
+    randaoReveal,
+    graffiti,
+    eth1Data,
     proposerSlashings,
     attesterSlashings,
     attestations,
     deposits,
     voluntaryExits,
-    transfers: [],
   };
 }

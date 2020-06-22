@@ -3,8 +3,7 @@ import Axios from "axios";
 import MockAdapter from "axios-mock-adapter";
 import {HttpClient} from "../../../src/util";
 import {describe, it, beforeEach} from "mocha";
-import {ILogger} from "../../../src";
-import {WinstonLogger} from "@chainsafe/lodestar/lib/logger";
+import {ILogger, WinstonLogger} from "@chainsafe/lodestar-utils/lib/logger";
 import sinon from "sinon";
 
 interface IUser {
@@ -31,6 +30,15 @@ describe("httpClient test", () => {
     assert.equal(user.name, "John Smith");
   });
 
+  it("should handle successful GET request with query correctly", async () => {
+    mock.onGet("/users?id=1").reply(
+      200, {id: 1, name: "John Smith"}
+    );
+    const user: IUser = await httpClient.get<IUser>("/users", {id: 1});
+    assert.equal(user.id, 1);
+    assert.equal(user.name, "John Smith");
+  });
+
   it("should handle successful POST request correctly", async () => {
     mock.onPost("/users", {name: "New comer"}).reply(200, "The user 'New comer' was saved successfully");
     const result: string = await httpClient.post<IUser, string>("/users", {name: "New comer"});
@@ -41,7 +49,7 @@ describe("httpClient test", () => {
     try {
       await httpClient.get<IUser>("/wrong_url");
     } catch(e) {
-      assert.equal(e.message, "404");
+      assert.equal(e.message, "Endpoint not found");
     }
   });
 
@@ -52,7 +60,7 @@ describe("httpClient test", () => {
     try {
       await httpClient.get<IUser>("/users/!");
     } catch(e) {
-      assert.equal(e.message, "500");
+      assert.equal(e.message, "Request failed with response status 500");
     }
   });
 });

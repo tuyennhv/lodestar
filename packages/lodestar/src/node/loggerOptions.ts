@@ -1,5 +1,4 @@
-import {IConfigurationField} from "../util/config";
-import {defaultLogLevel, ILoggerOptions, LogLevel} from "../logger";
+import {defaultLogLevel, ILoggerOptions, LogLevel} from  "@chainsafe/lodestar-utils/lib/logger";
 
 export interface IBeaconLoggerOptions {
   chain: ILoggerOptions;
@@ -7,7 +6,6 @@ export interface IBeaconLoggerOptions {
   eth1: ILoggerOptions;
   node: ILoggerOptions;
   network: ILoggerOptions;
-  opPool: ILoggerOptions;
   sync: ILoggerOptions;
   metrics: ILoggerOptions;
   chores: ILoggerOptions;
@@ -38,10 +36,6 @@ const config: IBeaconLoggerOptions = {
     level: LogLevel[defaultLogLevel],
     module: "network",
   },
-  opPool: {
-    level: LogLevel[defaultLogLevel],
-    module: "opPool",
-  },
   sync: {
     level: LogLevel[defaultLogLevel],
     module: "sync",
@@ -58,29 +52,3 @@ const config: IBeaconLoggerOptions = {
 
 export default config;
 
-export const BeaconLoggerOptions: IConfigurationField = {
-  name: "logger",
-  description: "log level",
-  type: "string",
-  configurable: true,
-  process: (input: string): IBeaconLoggerOptions => {
-    // input is in the following format:
-    //   module=level,module=level
-    //   eg: db=info,sync=debug
-    // convert input into {module: level} object
-    const logLevels = input.split(",")
-      .map((kv) => kv.split("="))
-      .reduce((obj, kv) => ({...obj, [kv[0]]: kv[1]}), {});
-    // mix in user input with defaults
-    const _config = config;
-    Object.keys(_config)
-      //@ts-ignore
-      .filter((module) => logLevels[module])
-      //@ts-ignore
-      .forEach((module) => _config[module].level = logLevels[module]);
-    return _config;
-  },
-  cli: {
-    flag: "logLevel"
-  },
-};

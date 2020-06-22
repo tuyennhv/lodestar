@@ -1,25 +1,23 @@
 import {describe, it, beforeEach} from "mocha";
-import sinon from "sinon";
-import {BlockRepository} from "../../../../src/db/api/beacon/repositories";
-import {BlockArchiveRepository} from "../../../../src/db/api/beacon/repositories/blockArchive";
-import {WinstonLogger} from "../../../../src/logger";
-import {ArchiveBlocksTask} from "../../../../src/tasks/tasks/archiveBlocks";
-import {config} from "@chainsafe/eth2.0-config/lib/presets/mainnet";
 import {expect} from "chai";
-import {generateEmptyBlock} from "../../../utils/block";
-import {computeStartSlotOfEpoch} from "@chainsafe/eth2.0-state-transition";
+import sinon from "sinon";
+
+import {config} from "@chainsafe/lodestar-config/lib/presets/mainnet";
+import {computeStartSlotAtEpoch} from "@chainsafe/lodestar-beacon-state-transition";
+import {WinstonLogger} from "@chainsafe/lodestar-utils/lib/logger";
+
+import {ArchiveBlocksTask} from "../../../../src/tasks/tasks/archiveBlocks";
+import {generateEmptyBlock, generateEmptySignedBlock} from "../../../utils/block";
+import {StubbedBeaconDb} from "../../../utils/stub";
 
 describe("block archiver task", function () {
 
   const sandbox = sinon.createSandbox();
 
-  let dbStub: any, loggerStub: any;
+  let dbStub: StubbedBeaconDb, loggerStub: any;
 
   beforeEach(function () {
-    dbStub = {
-      block: sandbox.createStubInstance(BlockRepository),
-      blockArchive: sandbox.createStubInstance(BlockArchiveRepository)
-    };
+    dbStub = new StubbedBeaconDb(sandbox);
     loggerStub = sandbox.createStubInstance(WinstonLogger);
   });
 
@@ -34,20 +32,23 @@ describe("block archiver task", function () {
         root: Buffer.alloc(32)
       }
     );
-    dbStub.block.getAll.resolves([
-      generateEmptyBlock(),
-      generateEmptyBlock(),
+    dbStub.block.values.resolves([
+      generateEmptySignedBlock(),
+      generateEmptySignedBlock(),
       {
-        ...generateEmptyBlock(),
-        slot: computeStartSlotOfEpoch(config, 4)
-      }
+        message: {
+          ...generateEmptyBlock(),
+          slot: computeStartSlotAtEpoch(config, 4)
+        },
+        signature: Buffer.alloc(96),
+      },
     ]);
     await archiverTask.run();
     expect(
-      dbStub.blockArchive.addMany.calledOnceWith(sinon.match((criteria) => criteria.length === 2))
+      dbStub.blockArchive.batchAdd.calledOnceWith(sinon.match((criteria) => criteria.length === 2))
     ).to.be.true;
     expect(
-      dbStub.block.deleteManyByValue.calledOnceWith(sinon.match((criteria) => criteria.length === 2))
+      dbStub.block.batchRemove.calledOnceWith(sinon.match((criteria) => criteria.length === 2))
     ).to.be.true;
   });
 

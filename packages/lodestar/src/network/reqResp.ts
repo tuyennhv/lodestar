@@ -3,291 +3,273 @@
  */
 import {EventEmitter} from "events";
 import LibP2p from "libp2p";
-import PeerInfo from "peer-info";
-//@ts-ignore
-import LibP2pConnection from "interface-connection";
-import {promisify} from "es6-promisify";
-import pull from "pull-stream";
-import * as varint from "varint";
+import {pipe} from "it-pipe";
 import {
-  RequestBody, ResponseBody,
-  Hello, Goodbye,
-  BeaconBlocksByRangeRequest, BeaconBlocksByRangeResponse,
-  BeaconBlocksByRootRequest, BeaconBlocksByRootResponse,
-} from "@chainsafe/eth2.0-types";
-import {serialize, deserialize} from "@chainsafe/ssz";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-
+  BeaconBlocksByRangeRequest,
+  BeaconBlocksByRootRequest,
+  Goodbye,
+  Metadata,
+  Ping,
+  RequestBody,
+  ResponseBody,
+  SignedBeaconBlock,
+  Status,
+} from "@chainsafe/lodestar-types";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {Method, ReqRespEncoding, RequestId, RESP_TIMEOUT, RpcResponseStatus} from "../constants";
+import {ILogger} from "@chainsafe/lodestar-utils/lib/logger";
 import {
-  Encoding,
-  ERR_INVALID_REQ,
-  ERR_RESP_TIMEOUT,
-  Method,
-  REQ_RESP_MAX_SIZE,
-  RequestId,
-  RESP_TIMEOUT,
-} from "../constants";
-import {ILogger} from "../logger";
-import {createResponseEvent, createRpcProtocol, randomRequestId,} from "./util";
-
-import {IReqResp, ReqRespEventEmitter} from "./interface";
+  createResponseEvent,
+  createRpcProtocol,
+  eth2ResponseTimer,
+  isRequestOnly,
+  isRequestSingleChunk,
+  randomRequestId
+} from "./util";
+import {IReqResp, ReqEventEmitter, RespEventEmitter, ResponseCallbackFn} from "./interface";
 import {INetworkOptions} from "./options";
+import PeerId from "peer-id";
+import PeerInfo from "peer-info";
+import {RpcError} from "./error";
+import {eth2RequestDecode, eth2RequestEncode} from "./encoders/request";
+import {eth2ResponseDecode, eth2ResponseEncode} from "./encoders/response";
+import {IResponseChunk} from "./encoders/interface";
+import {IReputationStore} from "../sync/IReputation";
 
-interface IReqRespEventEmitterClass {
-  new(): ReqRespEventEmitter;
+interface IReqEventEmitterClass {
+  new(): ReqEventEmitter;
+}
+
+interface IRespEventEmitterClass {
+  new(): RespEventEmitter;
 }
 
 interface IReqRespModules {
   config: IBeaconConfig;
   libp2p: LibP2p;
   logger: ILogger;
+  peerReputations: IReputationStore;
 }
 
-export class ReqResp extends (EventEmitter as IReqRespEventEmitterClass) implements IReqResp {
+class ResponseEventListener extends (EventEmitter as IRespEventEmitterClass) {
+  public waitForResponse(requestId: string, responseListener: ResponseCallbackFn): NodeJS.Timeout {
+    const responseEvent = createResponseEvent(requestId);
+    this.once(responseEvent, responseListener);
+
+    return setTimeout(() => {
+      this.removeListener(responseEvent, responseListener);
+      const errorGenerator: AsyncGenerator<IResponseChunk> = async function* () {
+        yield {status: RpcResponseStatus.ERR_RESP_TIMEOUT, requestId};
+      }();
+      responseListener(errorGenerator);
+    }, RESP_TIMEOUT);
+  }
+}
+
+export class ReqResp extends (EventEmitter as IReqEventEmitterClass) implements IReqResp {
   private config: IBeaconConfig;
   private libp2p: LibP2p;
   private logger: ILogger;
-  private encoding: Encoding;
+  private responseListener: ResponseEventListener;
+  private peerReputations: IReputationStore;
 
-  public constructor(opts: INetworkOptions, {config, libp2p, logger}: IReqRespModules) {
+  public constructor(opts: INetworkOptions, {config, libp2p, peerReputations, logger}: IReqRespModules) {
     super();
     this.config = config;
     this.libp2p = libp2p;
+    this.peerReputations = peerReputations;
     this.logger = logger;
-    this.encoding = Encoding.ssz;
+    this.responseListener = new ResponseEventListener();
   }
   public async start(): Promise<void> {
     Object.values(Method).forEach((method) => {
-      this.libp2p.handle(
-        createRpcProtocol(method, this.encoding),
-        async (protocol: string, conn: LibP2pConnection) => {
-          const peerInfo = (await promisify(conn.getPeerInfo.bind(conn))()) as PeerInfo;
-          pull(
-            conn,
-            this.handleRequest(peerInfo, method, method === Method.Goodbye),
-            conn,
-          );
-        });
-    });
-  }
-  public async stop(): Promise<void> {
-    Object.values(Method).forEach((method) => {
-      this.libp2p.unhandle(createRpcProtocol(method, this.encoding));
-    });
-  }
-
-  public sendResponse(id: RequestId, err: Error, body: ResponseBody): void {
-    // @ts-ignore
-    this.emit(createResponseEvent(id), err, body);
-  }
-  public async hello(peerInfo: PeerInfo, request: Hello): Promise<Hello> {
-    return await this.sendRequest<Hello>(peerInfo, Method.Hello, request);
-  }
-  public async goodbye(peerInfo: PeerInfo, request: Goodbye): Promise<void> {
-    await this.sendRequest<Goodbye>(peerInfo, Method.Goodbye, request, true);
-  }
-  public async beaconBlocksByRange(
-    peerInfo: PeerInfo,
-    request: BeaconBlocksByRangeRequest
-  ): Promise<BeaconBlocksByRangeResponse> {
-    return await this.sendRequest<BeaconBlocksByRangeResponse>(peerInfo, Method.BeaconBlocksByRange, request);
-  }
-  public async beaconBlocksByRoot(
-    peerInfo: PeerInfo,
-    request: BeaconBlocksByRootRequest
-  ): Promise<BeaconBlocksByRootResponse> {
-    return await this.sendRequest<BeaconBlocksByRootResponse>(peerInfo, Method.BeaconBlocksByRoot, request);
-  }
-
-  /**
-   * Return a "through" pull-stream that processes a request and waits for/returns a response
-   */
-  private handleRequest = (peerInfo: PeerInfo, method: Method, requestOnly?: boolean) => {
-    //@ts-ignore
-    return (read) => {
-      //@ts-ignore
-      return (end, cb) => {
-        //@ts-ignore
-        read(end, (end, data) => {
-          if (end) return cb(end);
-          try {
-            const request = this.decodeRequest(method, data);
-            const requestId = randomRequestId();
-            this.logger.verbose(`${requestId} - receive ${method} request from ${peerInfo.id.toB58String()}`);
-            if (!requestOnly) {
-              const responseEvent = createResponseEvent(requestId);
-              // eslint-disable-next-line
-              let responseListener: any;
-              const responseTimer = setTimeout(() => {
-                this.logger.verbose(`${requestId} - send ${method} response timeout`);
-                // @ts-ignore
-                this.removeListener(responseEvent, responseListener);
-                cb(null, this.encodeResponseError(new Error(ERR_RESP_TIMEOUT)));
-              }, RESP_TIMEOUT);
-              responseListener = (err: Error|null, output: ResponseBody): void => {
-                // @ts-ignore
-                this.removeListener(responseEvent, responseListener);
-                clearTimeout(responseTimer);
-                if (err) return cb(null, this.encodeResponseError(err));
-                cb(null, this.encodeResponse(method, output));
-                this.logger.verbose(`${requestId} - send ${method} response`);
-              };
-              // @ts-ignore
-              this.once(responseEvent, responseListener);
-            } else {
-              cb(true);
-            }
-            this.emit("request", peerInfo, method, requestId, request);
-          } catch (e) {
-            if (!requestOnly) {
-              cb(null, this.encodeResponseError(e));
-            }
+      Object.values(ReqRespEncoding).forEach((encoding) => {
+        this.libp2p.handle(
+          createRpcProtocol(method, encoding),
+          async ({connection, stream}) => {
+            const peerId = connection.remotePeer;
+            pipe(
+              stream.source,
+              eth2RequestDecode(this.config, this.logger, method, encoding),
+              this.storePeerEncodingPreference(peerId, method, encoding),
+              this.handleRpcRequest(peerId, method, encoding),
+              eth2ResponseEncode(this.config, this.logger, method, encoding),
+              stream.sink
+            );
           }
-        });
-      };
-    };
-  };
-  private encodeRequest(method: Method, body: RequestBody): Buffer {
-    let output = Buffer.alloc(0);
-    switch (method) {
-      case Method.Hello:
-        output = serialize(body, this.config.types.Hello);
-        break;
-      case Method.Goodbye:
-        output = serialize(body, this.config.types.Goodbye);
-        break;
-      case Method.BeaconBlocksByRange:
-        output = serialize(body, this.config.types.BeaconBlocksByRangeRequest);
-        break;
-      case Method.BeaconBlocksByRoot:
-        output = serialize(body, this.config.types.BeaconBlocksByRootRequest);
-        break;
-    }
-    return Buffer.concat([
-      Buffer.from(varint.encode(output.length)),
-      output,
-    ]);
-  }
-  private encodeResponse(method: Method, body: ResponseBody): Buffer {
-    let output= Buffer.alloc(0);
-    switch (method) {
-      case Method.Hello:
-        output = serialize(body, this.config.types.Hello);
-        break;
-      case Method.Goodbye:
-        output = serialize(body, this.config.types.Goodbye);
-        break;
-      case Method.BeaconBlocksByRange:
-        output = serialize(body, this.config.types.BeaconBlocksByRangeResponse);
-        break;
-      case Method.BeaconBlocksByRoot:
-        output = serialize(body, this.config.types.BeaconBlocksByRootResponse);
-        break;
-    }
-    return Buffer.concat([
-      Buffer.alloc(1),
-      Buffer.from(varint.encode(output.length)),
-      output,
-    ]);
-  }
-  private encodeResponseError(err: Error): Buffer {
-    const b = Buffer.from("c" + err.message);
-    b[0] = err.message === ERR_INVALID_REQ ? 1 : 2;
-    return b;
-  }
-  private decodeRequest(method: Method, data: Buffer): RequestBody {
-    const length = varint.decode(data);
-    const bytes = varint.decode.bytes;
-    if (
-      length !== data.length - bytes ||
-      length > REQ_RESP_MAX_SIZE
-    ) {
-      throw new Error(ERR_INVALID_REQ);
-    }
-    data = data.slice(bytes);
-    switch (method) {
-      case Method.Hello:
-        return deserialize(data, this.config.types.Hello);
-      case Method.Goodbye:
-        return deserialize(data, this.config.types.Goodbye);
-      case Method.BeaconBlocksByRange:
-        return deserialize(data, this.config.types.BeaconBlocksByRangeRequest);
-      case Method.BeaconBlocksByRoot:
-        return deserialize(data, this.config.types.BeaconBlocksByRootRequest);
-    }
-  }
-  private decodeResponse(method: Method, data: Buffer): ResponseBody {
-    const code = data[0];
-    const length = varint.decode(data, 1);
-    const bytes = varint.decode.bytes;
-    if (
-      length !== data.length - (bytes + 1) ||
-      length > REQ_RESP_MAX_SIZE
-    ) {
-      throw new Error(ERR_INVALID_REQ);
-    }
-    data = data.slice(bytes + 1);
-    if (code !== 0) {
-      throw new Error(data.toString("utf8"));
-    }
-    switch (method) {
-      case Method.Hello:
-        return deserialize(data, this.config.types.Hello);
-      case Method.Goodbye:
-        return deserialize(data, this.config.types.Goodbye);
-      case Method.BeaconBlocksByRange:
-        return deserialize(data, this.config.types.BeaconBlocksByRangeResponse);
-      case Method.BeaconBlocksByRoot:
-        return deserialize(data, this.config.types.BeaconBlocksByRootResponse);
-    }
-  }
-  private async sendRequest<T extends ResponseBody>(
-    peerInfo: PeerInfo,
-    method: Method,
-    body: RequestBody,
-    requestOnly?: boolean
-  ): Promise<T> {
-    const protocol = createRpcProtocol(method, this.encoding);
-    return await new Promise((resolve, reject) => {
-      this.libp2p.dialProtocol(peerInfo, protocol, (err, conn): unknown => {
-        if (err) {
-          return reject(err);
-        }
-        this.logger.verbose(`send ${method} request to ${peerInfo.id.toB58String()}`);
-        // @ts-ignore
-        const responseTimer = setTimeout(() => reject(new Error(ERR_RESP_TIMEOUT)), RESP_TIMEOUT);
-        // pull-stream through that will resolve after the request is sent
-        // @ts-ignore
-        const requestOnlyThrough =(read): unknown => {
-          // @ts-ignore
-          return (end, cb) => {
-            // @ts-ignore
-            read(end, (end, data) => {
-              if (end) {
-                cb(end);
-                clearTimeout(responseTimer);
-                return resolve();
-              }
-              cb(null, data);
-            });
-          };
-        };
-        // @ts-ignore
-        pull(
-          pull.values([this.encodeRequest(method, body)]),
-          requestOnly && requestOnlyThrough,
-          conn,
-          pull.drain((data) => {
-            clearTimeout(responseTimer);
-            this.logger.verbose(`receive ${method} response from ${peerInfo.id.toB58String()}`);
-            try {
-              resolve(this.decodeResponse(method, data) as T);
-            } catch (e) {
-              reject(e);
-            }
-          }),
         );
       });
     });
+  }
+
+  public async stop(): Promise<void> {
+    Object.values(Method).forEach((method) => {
+      Object.values(ReqRespEncoding).forEach((encoding) => {
+        this.libp2p.unhandle(createRpcProtocol(method, encoding));
+      });
+    });
+  }
+
+  public sendResponse(id: RequestId, err: RpcError|null, response?: ResponseBody): void {
+    return this.sendResponseStream(id, err, async function *() {
+      if(response !== null && response !== undefined) {
+        yield response;
+      }
+    }());
+  }
+
+  public sendResponseStream(id: RequestId, err: RpcError|null, chunkIter: AsyncIterable<ResponseBody>): void {
+    if(err) {
+      this.responseListener.emit(createResponseEvent(id), async function* () {
+        yield {status: err.status, requestId: id};
+      }());
+      this.logger.verbose("Sent response with error for request " + id);
+    } else {
+      this.responseListener.emit(createResponseEvent(id), async function* () {
+        for await (const chunk of chunkIter) {
+          yield {status: RpcResponseStatus.SUCCESS, requestId: id, body: chunk};
+        }
+      }());
+      this.logger.verbose("Sent response for request " + id);
+    }
+  }
+
+  public async status(peerInfo: PeerInfo, request: Status): Promise<Status|null> {
+    return await this.sendRequest<Status>(peerInfo, Method.Status, request);
+  }
+
+  public async goodbye(peerInfo: PeerInfo, request: Goodbye): Promise<void> {
+    await this.sendRequest<Goodbye>(peerInfo, Method.Goodbye, request);
+  }
+
+  public async ping(peerInfo: PeerInfo, request: Ping): Promise<Ping|null> {
+    return await this.sendRequest<Ping>(peerInfo, Method.Ping, request);
+  }
+
+  public async metadata(peerInfo: PeerInfo): Promise<Metadata|null> {
+    return await this.sendRequest<Metadata>(peerInfo, Method.Metadata);
+  }
+
+  public async beaconBlocksByRange(
+    peerInfo: PeerInfo,
+    request: BeaconBlocksByRangeRequest
+  ): Promise<SignedBeaconBlock[]|null> {
+    return await this.sendRequest<SignedBeaconBlock[]>(peerInfo, Method.BeaconBlocksByRange, request);
+  }
+
+  public async beaconBlocksByRoot(
+    peerInfo: PeerInfo,
+    request: BeaconBlocksByRootRequest
+  ): Promise<SignedBeaconBlock[]|null> {
+    return await this.sendRequest<SignedBeaconBlock[]>(peerInfo, Method.BeaconBlocksByRoot, request);
+  }
+
+  private storePeerEncodingPreference(
+    peerId: PeerId, method: Method, encoding: ReqRespEncoding
+  ): (source: AsyncIterable<RequestBody>) => AsyncGenerator<RequestBody|null> {
+    return (source) => {
+      const peerReputations = this.peerReputations;
+      return (async function*() {
+        if (method === Method.Status) {
+          peerReputations.get(peerId.toB58String()).encoding = encoding;
+        }
+        yield* source;
+      })();
+    };
+  }
+
+  private handleRpcRequest(
+    peerId: PeerId, method: Method, encoding: ReqRespEncoding
+  ): ((source: AsyncIterable<RequestBody|null>) => AsyncGenerator<IResponseChunk>) {
+    const getResponse = this.getResponse;
+    return (source) => {
+      return (async function * () {
+        for await (const request of source) {
+          yield* getResponse(peerId, method, encoding, request);
+          return;
+        }
+        yield* getResponse(peerId, method, encoding);
+      })();
+    };
+  }
+
+  private getResponse = (
+    peerId: PeerId,
+    method: Method,
+    encoding: ReqRespEncoding,
+    request?: RequestBody): AsyncIterable<IResponseChunk> => {
+    const requestId = randomRequestId();
+    this.logger.verbose(`receive ${method} request from ${peerId.toB58String()}`, {requestId, encoding});
+    // eslint-disable-next-line
+    let responseTimer: NodeJS.Timeout;
+    const sourcePromise = new Promise<AsyncIterable<IResponseChunk>>((resolve) => {
+      const responseListenerFn: ResponseCallbackFn = async (responseIter) => {
+        clearTimeout(responseTimer);
+        resolve(responseIter);
+      };
+      responseTimer = this.responseListener.waitForResponse(requestId, responseListenerFn);
+      this.emit("request", new PeerInfo(peerId), method, requestId, request);
+    });
+
+    return (async function * () {
+      yield* await sourcePromise;
+    })();
+  };
+
+  private async sendRequest<T extends ResponseBody|ResponseBody[]>(
+    peerInfo: PeerInfo,
+    method: Method,
+    body?: RequestBody,
+  ): Promise<T|null> {
+    const reputaton = this.peerReputations.getFromPeerInfo(peerInfo);
+    const encoding = reputaton.encoding || ReqRespEncoding.SSZ_SNAPPY;
+    const requestOnly = isRequestOnly(method);
+    const requestSingleChunk = isRequestSingleChunk(method);
+    const requestId = randomRequestId();
+    try {
+      return await pipe(
+        this.sendRequestStream(peerInfo, method, encoding, requestId, body),
+        eth2ResponseTimer(),
+        async (source: AsyncIterable<T>): Promise<T | null> => {
+          const responses: Array<T> = [];
+          for await (const response of source) {
+            responses.push(response);
+          }
+          if (requestSingleChunk && responses.length === 0) {
+            // allow empty response for beacon blocks by range/root
+            throw `No response returned for method ${method}. request=${requestId}`;
+          }
+          const finalResponse = requestSingleChunk ? responses[0] : responses;
+          this.logger.verbose(`receive ${method} response from ${peerInfo.id.toB58String()}`,{requestId, encoding});
+          return requestOnly ? null : finalResponse as T;
+        }
+      );
+    } catch (e) {
+      this.logger.error(
+        `failed to send request ${requestId} to peer ${peerInfo.id.toB58String()}`, e
+      );
+    }
+  }
+
+  private sendRequestStream<T extends ResponseBody>(
+    peerInfo: PeerInfo,
+    method: Method,
+    encoding: ReqRespEncoding,
+    requestId: RequestId,
+    body?: RequestBody,
+  ): AsyncIterable<T> {
+    const {libp2p, config, logger} = this;
+
+    return (async function * () {
+      const protocol = createRpcProtocol(method, encoding);
+      const {stream} = await libp2p.dialProtocol(peerInfo, protocol) as {stream: Stream};
+      logger.verbose(`sending ${method} request to ${peerInfo.id.toB58String()}`, {requestId, encoding});
+      yield* pipe(
+        (body !== null && body !== undefined) ? [body] : [null],
+        eth2RequestEncode(config, logger, method, encoding),
+        stream,
+        eth2ResponseDecode(config, logger, method, encoding, requestId)
+      );
+    })();
   }
 }

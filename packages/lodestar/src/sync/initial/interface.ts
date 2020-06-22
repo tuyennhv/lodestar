@@ -1,21 +1,22 @@
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-import PeerInfo from "peer-info";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
 import {IBeaconChain} from "../../chain";
 import {INetwork} from "../../network";
-import {ReputationStore} from "../IReputation";
-import {ILogger} from "../../logger";
-import {Checkpoint, Epoch} from "@chainsafe/eth2.0-types";
+import {IReputationStore} from "../IReputation";
+import {ILogger} from "@chainsafe/lodestar-utils/lib/logger";
+import {Checkpoint, Epoch} from "@chainsafe/lodestar-types";
 import StrictEventEmitter from "strict-event-emitter-types";
 import {EventEmitter} from "events";
 import {IService} from "../../node";
+import {ISyncModule} from "../interface";
+import {ISyncStats} from "../stats";
 
 export interface IInitialSyncModules {
   config: IBeaconConfig;
   chain: IBeaconChain;
   network: INetwork;
-  reps: ReputationStore;
+  reputationStore: IReputationStore;
   logger: ILogger;
-  peers: PeerInfo[];
+  stats?: ISyncStats;
 }
 
 export interface IInitialSyncEvents {
@@ -24,4 +25,4 @@ export interface IInitialSyncEvents {
 }
 export type InitialSyncEventEmitter = StrictEventEmitter<EventEmitter, IInitialSyncEvents>;
 
-export type InitialSync = IService & InitialSyncEventEmitter;
+export type InitialSync = IService & InitialSyncEventEmitter & ISyncModule;

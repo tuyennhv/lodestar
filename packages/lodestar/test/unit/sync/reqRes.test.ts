@@ -1,47 +1,66 @@
-import sinon from "sinon";
+import sinon, {SinonStubbedInstance} from "sinon";
 import {expect} from "chai";
 import PeerInfo from "peer-info";
 import PeerId from "peer-id";
-import {Goodbye, Hello,} from "@chainsafe/eth2.0-types";
-import {config} from "@chainsafe/eth2.0-config/lib/presets/mainnet";
+import {
+  BeaconBlocksByRangeRequest,
+  Goodbye,
+  RequestId,
+  ResponseBody,
+  SignedBeaconBlock,
+  Status
+} from "@chainsafe/lodestar-types";
+import {config} from "@chainsafe/lodestar-config/lib/presets/mainnet";
 
-import {Method, ZERO_HASH} from "../../../src/constants";
-import {BeaconChain} from "../../../src/chain";
+import {GENESIS_EPOCH, Method, ZERO_HASH, ReqRespEncoding} from "../../../src/constants";
+import {BeaconChain, ILMDGHOST, StatefulDagLMDGHOST} from "../../../src/chain";
 import {Libp2pNetwork} from "../../../src/network";
-import {WinstonLogger} from "../../../src/logger";
+import {WinstonLogger} from "@chainsafe/lodestar-utils/lib/logger";
 import {generateState} from "../../utils/state";
-import {SyncReqResp} from "../../../src/sync/reqResp";
-import {BlockRepository, ChainRepository, StateRepository} from "../../../src/db/api/beacon/repositories";
 import {ReqResp} from "../../../src/network/reqResp";
 import {ReputationStore} from "../../../src/sync/IReputation";
+import {generateEmptySignedBlock} from "../../utils/block";
+import {IBeaconDb} from "../../../src/db/api";
+import {BeaconReqRespHandler} from "../../../src/sync/reqResp";
+import {RpcError} from "../../../src/network/error";
+import {StubbedBeaconDb} from "../../utils/stub";
+import {getBlockSummary} from "../../utils/headBlockInfo";
 
-describe("syncing", function () {
-  let sandbox = sinon.createSandbox();
-  let syncRpc: SyncReqResp;
-  let chainStub, networkStub, dbStub, repsStub, logger, reqRespStub;
+describe("sync req resp", function () {
+  const sandbox = sinon.createSandbox();
+  let syncRpc: BeaconReqRespHandler;
+  let chainStub: SinonStubbedInstance<BeaconChain>,
+    networkStub: SinonStubbedInstance<Libp2pNetwork>,
+    repsStub: SinonStubbedInstance<ReputationStore>,
+    forkChoiceStub: SinonStubbedInstance<ILMDGHOST>,
+    logger: WinstonLogger,
+    reqRespStub: SinonStubbedInstance<ReqResp>;
+  let dbStub: StubbedBeaconDb;
 
   beforeEach(() => {
     chainStub = sandbox.createStubInstance(BeaconChain);
-    chainStub.latestState = generateState();
+    forkChoiceStub = sandbox.createStubInstance(StatefulDagLMDGHOST);
+    chainStub.forkChoice = forkChoiceStub;
+    forkChoiceStub.head.returns(getBlockSummary({}));
+    forkChoiceStub.getFinalized.returns({epoch: GENESIS_EPOCH, root: ZERO_HASH});
+    chainStub.getHeadState.resolves(generateState());
+    // @ts-ignore
     chainStub.config = config;
+    sandbox.stub(chainStub, "currentForkDigest").get(() => Buffer.alloc(4));
     reqRespStub = sandbox.createStubInstance(ReqResp);
     networkStub = sandbox.createStubInstance(Libp2pNetwork);
-    networkStub.reqResp = reqRespStub;
-    dbStub = {
-      chain: sandbox.createStubInstance(ChainRepository),
-      state: sandbox.createStubInstance(StateRepository),
-      block: sandbox.createStubInstance(BlockRepository),
-    };
+    networkStub.reqResp = reqRespStub as unknown as ReqResp & SinonStubbedInstance<ReqResp>;
+    dbStub = new StubbedBeaconDb(sandbox);
     repsStub = sandbox.createStubInstance(ReputationStore);
     logger = new WinstonLogger();
     logger.silent = true;
 
-    syncRpc = new SyncReqResp({}, {
+    syncRpc = new BeaconReqRespHandler({
       config,
-      db: dbStub,
+      db: dbStub as unknown as IBeaconDb,
       chain: chainStub,
       network: networkStub,
-      reps: repsStub,
+      reputationStore: repsStub,
       logger,
     });
   });
@@ -52,34 +71,14 @@ describe("syncing", function () {
   });
 
 
-  it('should able to create Hello - genesis time', async function () {
-    chainStub.genesisTime = 0;
-    chainStub.networkId = 1n;
-    chainStub.chainId = 1;
-
-    const expected: Hello = {
-      headForkVersion: Buffer.alloc(4),
-      finalizedRoot: ZERO_HASH ,
-      finalizedEpoch: 0,
-      headRoot: ZERO_HASH,
-      headSlot: 0,
-    };
-
-    try {
-      // @ts-ignore
-      let result = await syncRpc.createHello();
-      expect(result).deep.equal(expected);
-    }catch (e) {
-      expect.fail(e.stack);
-    }
-  });
-  it('should start and stop sync rpc', async function () {
+  it("should start and stop sync rpc", async function () {
     const peerInfo: PeerInfo = new PeerInfo(new PeerId(Buffer.from("lodestar")));
     networkStub.hasPeer.returns(true);
     networkStub.getPeers.returns([peerInfo, peerInfo]);
     repsStub.get.returns({
-      latestHello: {},
+      latestMetadata: null, latestStatus: null, score: 0, encoding: ReqRespEncoding.SSZ_SNAPPY
     });
+
 
 
     try {
@@ -91,66 +90,130 @@ describe("syncing", function () {
     }
   });
 
-  it('should handle request  - onHello(success)', async function () {
+  it("should handle request  - onStatus(success)", async function () {
     const peerInfo: PeerInfo = new PeerInfo(new PeerId(Buffer.from("lodestar")));
-    const body: Hello = {
-      headForkVersion: Buffer.alloc(4),
+    const body: Status = {
+      forkDigest: Buffer.alloc(4),
       finalizedRoot: Buffer.alloc(32),
       finalizedEpoch: 1,
       headRoot: Buffer.alloc(32),
       headSlot: 1,
     };
     repsStub.get.returns({
-      latestHello: null,
+      latestMetadata: null, latestStatus: null, score: 0, encoding: ReqRespEncoding.SSZ_SNAPPY
     });
     reqRespStub.sendResponse.resolves(0);
+    dbStub.stateCache.get.resolves(generateState() as any);
     try {
-      await syncRpc.onRequest(peerInfo, Method.Hello, "hello", body);
+      await syncRpc.onRequest(peerInfo, Method.Status, "status", body);
       expect(reqRespStub.sendResponse.calledOnce).to.be.true;
+      expect(reqRespStub.goodbye.called).to.be.false;
     }catch (e) {
       expect.fail(e.stack);
     }
   });
 
-  it('should handle request  - onHello(error)', async function () {
+  it("should handle request  - onStatus(error)", async function () {
     const peerInfo: PeerInfo = new PeerInfo(new PeerId(Buffer.from("lodestar")));
-    const body: Hello = {
-      headForkVersion: Buffer.alloc(4),
+    const body: Status = {
+      forkDigest: Buffer.alloc(4),
       finalizedRoot: Buffer.alloc(32),
       finalizedEpoch: 1,
       headRoot: Buffer.alloc(32),
       headSlot: 1,
     };
     repsStub.get.returns({
-      latestHello: null,
+      latestMetadata: null, latestStatus: null, score: 0, encoding: ReqRespEncoding.SSZ_SNAPPY
     });
     try {
       reqRespStub.sendResponse.throws(new Error("server error"));
-      await syncRpc.onRequest(peerInfo, Method.Hello, "hello", body);
+      await syncRpc.onRequest(peerInfo, Method.Status, "status", body);
     }catch (e) {
       expect(reqRespStub.sendResponse.called).to.be.true;
     }
   });
 
+  it("should disconnect on status - incorrect headForkVersion", async function() {
+    const body: Status = {
+      forkDigest: Buffer.alloc(4),
+      finalizedRoot: Buffer.alloc(32),
+      finalizedEpoch: 1,
+      headRoot: Buffer.alloc(32),
+      headSlot: 1,
+    };
 
-  it('should handle request - onGoodbye', async function () {
+    sandbox.stub(chainStub, "currentForkDigest").get(() => Buffer.alloc(4).fill(1));
+    expect(await syncRpc.shouldDisconnectOnStatus(body)).to.be.true;
+  });
+
+  it("should not disconnect on status", async function() {
+    const body: Status = {
+      forkDigest: Buffer.alloc(4),
+      finalizedRoot: config.types.BeaconBlock.hashTreeRoot(generateEmptySignedBlock().message),
+      finalizedEpoch: 1,
+      headRoot: Buffer.alloc(32),
+      headSlot: 1,
+    };
+
+    dbStub.blockArchive.get.resolves(generateEmptySignedBlock());
+    const state = generateState();
+    state.fork.currentVersion = Buffer.alloc(4);
+    state.finalizedCheckpoint.epoch = 1;
+    dbStub.stateCache.get.resolves(state as any);
+
+    expect(await syncRpc.shouldDisconnectOnStatus(body)).to.be.false;
+  });
+
+  it("should handle request - onGoodbye", async function () {
     const peerInfo: PeerInfo = new PeerInfo(new PeerId(Buffer.from("lodestar")));
     const goodbye: Goodbye = 1n;
-    networkStub.disconnect.resolves(0);
+    networkStub.disconnect.resolves();
     try {
       await syncRpc.onRequest(peerInfo, Method.Goodbye, "goodBye", goodbye);
-      expect(networkStub.disconnect.calledOnce).to.be.true;
+      // expect(networkStub.disconnect.calledOnce).to.be.true;
     }catch (e) {
       expect.fail(e.stack);
     }
   });
 
-  it('should fail to handle request ', async function () {
+  it("should fail to handle request ", async function () {
     const peerInfo: PeerInfo = new PeerInfo(new PeerId(Buffer.from("lodestar")));
     try {
       await syncRpc.onRequest(peerInfo, null, "null", null);
     }catch (e) {
       expect.fail(e.stack);
     }
+  });
+
+  it("should handle request - onBeaconBlocksByRange", async function() {
+    const peerInfo: PeerInfo = new PeerInfo(new PeerId(Buffer.from("lodestar")));
+    const body: BeaconBlocksByRangeRequest = {
+      startSlot: 2,
+      count: 4,
+      step: 2,
+    };
+    dbStub.blockArchive.valuesStream.returns(async function* () {
+      for (const slot of [2, 4]) {
+        const block = generateEmptySignedBlock();
+        block.message.slot = slot;
+        yield block;
+      }
+    }());
+    // block 6 does not exist
+    const block8 = generateEmptySignedBlock();
+    block8.message.slot = 8;
+    chainStub.getBlockAtSlot.onFirstCall().resolves(null);
+    chainStub.getBlockAtSlot.onSecondCall().resolves(block8);
+    let blockStream: AsyncIterable<ResponseBody>;
+    reqRespStub.sendResponseStream.callsFake((id: RequestId, err: RpcError, chunkIter: AsyncIterable<ResponseBody>) => {
+      blockStream = chunkIter;
+    });
+    await syncRpc.onRequest(peerInfo, Method.BeaconBlocksByRange, "range", body);
+    const slots = [];
+    for await(const body of blockStream) {
+      slots.push((body as SignedBeaconBlock).message.slot);
+    }
+    // count is 4 but it returns only 3 blocks because block 6 does not exist
+    expect(slots).to.be.deep.equal([2,4,8]);
   });
 });

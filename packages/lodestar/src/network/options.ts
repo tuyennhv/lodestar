@@ -1,58 +1,25 @@
-import {number64} from "@chainsafe/eth2.0-types";
-import {IConfigurationModule} from "../util/config";
+import {Number64} from "@chainsafe/lodestar-types";
+import {ENR, IDiscv5DiscoveryInputOptions} from "@chainsafe/discv5";
 
 export interface INetworkOptions {
-  maxPeers: number64;
+  maxPeers: Number64;
   multiaddrs: string[];
   bootnodes: string[];
-  rpcTimeout: number64;
+  discv5?: IDiscv5DiscoveryInputOptions;
+  rpcTimeout: Number64;
   connectTimeout: number;
   disconnectTimeout: number;
 }
 
-export const NetworkOptions: IConfigurationModule = {
-  name: "network",
-  fields: [
-    {
-      name: "maxPeers",
-      type: "number",
-      configurable: true,
-      process: (input) => {
-        return parseInt(input);
-      },
-      cli: {
-        flag: "maxPeers"
-      }
-    },
-    {
-      name: "bootnodes",
-      type: [String],
-      configurable: true,
-      process: (input: string) => {
-        return input.split(",").map((input) => input.trim());
-      },
-      cli: {
-        flag: "bootnodes"
-      }
-    },
-    {
-      name: "multiaddrs",
-      type: [String],
-      configurable: true,
-      process: (input: string) => {
-        return input.split(",").map((input) => input.trim());
-      },
-      cli: {
-        flag: "multiaddrs"
-      }
-    },
-  ]
-};
-
 const config: INetworkOptions = {
   maxPeers: 25,
-  multiaddrs: ["/ip4/127.0.0.1/tcp/30606"],
+  multiaddrs: [],
   bootnodes: [],
+  discv5: {
+    bindAddr: "/ip4/0.0.0.0/udp/5500",
+    enr: new ENR(),
+    bootEnrs: [],
+  },
   rpcTimeout: 5000,
   connectTimeout: 3000,
   disconnectTimeout: 3000,

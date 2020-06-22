@@ -4,61 +4,52 @@
 import PeerInfo from "peer-info";
 import {EventEmitter} from "events";
 import {
-  Attestation, BeaconBlock, Shard,
-  RequestBody, ResponseBody,
-  Hello, Goodbye,
-  BeaconBlocksByRangeRequest, BeaconBlocksByRangeResponse,
-  BeaconBlocksByRootRequest, BeaconBlocksByRootResponse,
-} from "@chainsafe/eth2.0-types";
-
-import {RequestId, Method, BLOCK_TOPIC, ATTESTATION_TOPIC} from "../constants";
+  BeaconBlocksByRangeRequest,
+  BeaconBlocksByRootRequest,
+  Goodbye,
+  Metadata,
+  Ping,
+  RequestBody,
+  ResponseBody,
+  SignedBeaconBlock,
+  Status,
+} from "@chainsafe/lodestar-types";
+import {Method, RequestId} from "../constants";
 import StrictEventEmitter from "strict-event-emitter-types";
+import {IGossip} from "./gossip/interface";
+import {RpcError} from "./error";
+import {MetadataController} from "./metadata";
+import {IResponseChunk} from "./encoders/interface";
 
-// req/resp
 
-export interface IReqRespEvents {
+export type ResponseCallbackFn = ((responseIter: AsyncIterable<IResponseChunk>) => void);
+
+interface IRespEvents {
+  [responseEvent: string]: ResponseCallbackFn;
+}
+
+export interface IReqEvents {
   request: (peerInfo: PeerInfo, method: Method, id: RequestId, body: RequestBody) => void;
 }
-export type ReqRespEventEmitter = StrictEventEmitter<EventEmitter, IReqRespEvents>;
 
-export interface IReqResp extends ReqRespEventEmitter {
-  // sendRequest<T extends ResponseBody>(peerInfo: PeerInfo, method: Method, body: RequestBody): Promise<T>;
-  sendResponse(id: RequestId, err: Error|null, result: ResponseBody|null): void;
+export type ReqEventEmitter = StrictEventEmitter<EventEmitter, IReqEvents>;
+export type RespEventEmitter = StrictEventEmitter<EventEmitter, IRespEvents>;
 
-  hello(peerInfo: PeerInfo, request: Hello): Promise<Hello>;
+export interface IReqResp extends ReqEventEmitter {
+  sendResponseStream(id: RequestId, err: RpcError, chunkIter: AsyncIterable<ResponseBody>): void;
+  sendResponse(id: RequestId, err: RpcError, response?: ResponseBody): void;
+  status(peerInfo: PeerInfo, request: Status): Promise<Status|null>;
   goodbye(peerInfo: PeerInfo, request: Goodbye): Promise<void>;
-  beaconBlocksByRange(peerInfo: PeerInfo, request: BeaconBlocksByRangeRequest): Promise<BeaconBlocksByRangeResponse>;
-  beaconBlocksByRoot(peerInfo: PeerInfo, request: BeaconBlocksByRootRequest): Promise<BeaconBlocksByRootResponse>;
-}
-
-// gossip
-
-export interface IGossipEvents {
-  [BLOCK_TOPIC]: (block: BeaconBlock) => void;
-  [ATTESTATION_TOPIC]: (attestation: Attestation) => void;
-  ["gossipsub:heartbeat"]: void;
-  // shard attestation topic is generated string so we cannot typehint it
-  //[shard{shardNumber % SHARD_SUBNET_COUNT}_beacon_attestation]: (attestation: Attestation) => void;
-}
-export type GossipEventEmitter = StrictEventEmitter<EventEmitter, IGossipEvents>;
-
-
-export interface IGossip extends GossipEventEmitter {
-  publishBlock(block: BeaconBlock): Promise<void>;
-  publishAttestation(attestation: Attestation): Promise<void>;
-  publishShardAttestation(attestation: Attestation): Promise<void>;
-  subscribeToBlocks(): void;
-  subscribeToAttestations(): void;
-  subscribeToShardAttestations(shard: Shard): void;
-  unsubscribeToBlocks(): void;
-  unsubscribeToAttestations(): void;
-  unsubscribeToShardAttestations(shard: Shard): void;
+  ping(peerInfo: PeerInfo, request: Ping): Promise<Ping|null>;
+  metadata(peerInfo: PeerInfo): Promise<Metadata|null>;
+  beaconBlocksByRange(peerInfo: PeerInfo, request: BeaconBlocksByRangeRequest): Promise<SignedBeaconBlock[]|null>;
+  beaconBlocksByRoot(peerInfo: PeerInfo, request: BeaconBlocksByRootRequest): Promise<SignedBeaconBlock[]|null>;
 }
 
 // network
 
 export interface INetworkEvents {
-  ["peer:connect"]: (peerInfo: PeerInfo) => void;
+  ["peer:connect"]: (peerInfo: PeerInfo, direction: "inbound"|"outbound") => void;
   ["peer:disconnect"]: (peerInfo: PeerInfo) => void;
 }
 export type NetworkEventEmitter = StrictEventEmitter<EventEmitter, INetworkEvents>;
@@ -66,6 +57,7 @@ export type NetworkEventEmitter = StrictEventEmitter<EventEmitter, INetworkEvent
 export interface INetwork extends NetworkEventEmitter {
   reqResp: IReqResp;
   gossip: IGossip;
+  metadata: MetadataController;
   /**
    * Our network identity
    */
@@ -73,16 +65,9 @@ export interface INetwork extends NetworkEventEmitter {
   getPeers(): PeerInfo[];
   hasPeer(peerInfo: PeerInfo): boolean;
   connect(peerInfo: PeerInfo): Promise<void>;
-  disconnect(peerInfo: PeerInfo): void;
+  disconnect(peerInfo: PeerInfo): Promise<void>;
+  searchSubnetPeers(subnet: string): Promise<void>;
   // Service
   start(): Promise<void>;
   stop(): Promise<void>;
-}
-
-export interface IGossipSub extends EventEmitter {
-  publish(topic: string, data: Buffer, cb: (err: unknown) => void): void;
-  start(cb: (err: unknown) => void): void;
-  stop(cb: (err: unknown) => void): void;
-  subscribe(topic: string): void;
-  unsubscribe(topic: string): void;
 }

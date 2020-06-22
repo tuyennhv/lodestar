@@ -3,40 +3,40 @@
  */
 
 import {ContractTransaction, ethers, Wallet} from "ethers";
-import {Provider} from "ethers/providers";
-import {BigNumber, ParamType} from "ethers/utils";
-import bls from "@chainsafe/bls";
-import {hash, signingRoot} from "@chainsafe/ssz";
-import {DepositData} from "@chainsafe/eth2.0-types";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
+import bls, {PrivateKey} from "@chainsafe/bls";
+import {hash} from "@chainsafe/ssz";
+import {DepositData} from "@chainsafe/lodestar-types";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
 
 import {DomainType} from "../constants";
-import {ILogger} from "../logger";
+import {IEthersAbi} from "./interface";
+import {computeSigningRoot, computeDomain} from "@chainsafe/lodestar-beacon-state-transition";
+import {ILogger} from "@chainsafe/lodestar-utils/lib/logger";
 
 
 export class Eth1Wallet {
 
   private wallet: Wallet;
 
-  private contractAbi: string|ParamType[];
+  private contractAbi: IEthersAbi;
 
   private config: IBeaconConfig;
 
   private logger: ILogger;
 
   public constructor(
-    privateKey: string,
-    contractAbi: string|ParamType[],
+    eth1PrivateKey: string,
+    contractAbi: IEthersAbi,
     config: IBeaconConfig,
     logger: ILogger,
-    provider?: Provider
+    provider?: ethers.providers.Provider,
   ) {
     this.config = config;
     this.logger = logger;
     if(!provider) {
       provider = ethers.getDefaultProvider();
     }
-    this.wallet = new Wallet(privateKey, provider);
+    this.wallet = new Wallet(eth1PrivateKey, provider);
     this.contractAbi = contractAbi;
   }
 
@@ -46,15 +46,19 @@ export class Eth1Wallet {
    * @param value amount to wei to deposit on contract
    */
 
-  public async createValidatorDeposit(address: string, value: BigNumber): Promise<string> {
+  public async submitValidatorDeposit(
+    address: string, 
+    value: ethers.BigNumber, 
+    signingKey: PrivateKey, 
+    withdrawalKey: PrivateKey
+  ): Promise<string> {
     const amount = BigInt(value.toString()) / 1000000000n;
 
     const contract = new ethers.Contract(address, this.contractAbi, this.wallet);
-    const privateKey = hash(Buffer.from(address, "hex"));
-    const pubkey = bls.generatePublicKey(privateKey);
+    const pubkey = signingKey.toPublicKey().toBytesCompressed();
     const withdrawalCredentials = Buffer.concat([
-      this.config.params.BLS_WITHDRAWAL_PREFIX_BYTE,
-      hash(pubkey).slice(1),
+      this.config.params.BLS_WITHDRAWAL_PREFIX,
+      hash(withdrawalKey.toPublicKey().toBytesCompressed()).slice(1),
     ]);
 
     // Create deposit data
@@ -65,24 +69,25 @@ export class Eth1Wallet {
       signature: Buffer.alloc(96)
     };
 
-    const signature = bls.sign(
-      privateKey,
-      signingRoot(depositData, this.config.types.DepositData),
-      Buffer.from([0, 0, 0, DomainType.DEPOSIT])
+    const domain = computeDomain(this.config, DomainType.DEPOSIT);
+    const signingroot = computeSigningRoot(this.config, this.config.types.DepositMessage, depositData, domain);
+    depositData.signature = bls.sign(
+      signingKey.toBytes(),
+      signingroot
     );
+
+    const depositDataRoot = this.config.types.DepositData.hashTreeRoot(depositData);
+
     // Send TX
-    try {
-      const tx: ContractTransaction = await contract.deposit(
-        pubkey,
-        withdrawalCredentials,
-        signature,
-        {value});
-      await tx.wait();
-      return tx.hash || "";
-    } catch(e) {
-      this.logger.error(e.message);
-      return "";
-    }
+    const tx: ContractTransaction = await contract.deposit(
+      pubkey,
+      withdrawalCredentials,
+      depositData.signature,
+      depositDataRoot,
+      {value}
+    );
+    await tx.wait();
+    return tx.hash || "";
   }
 
 }

@@ -2,23 +2,30 @@
  * @module validator
  */
 
-import {hashTreeRoot, signingRoot} from "@chainsafe/ssz";
-
-import {BeaconBlock, BeaconState, Fork, Slot} from "@chainsafe/eth2.0-types";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-import {Keypair} from "@chainsafe/bls";
-import {computeEpochOfSlot, DomainType, getDomain} from "../util";
-import {IValidatorDB,ILogger} from "../";
+import {BeaconState, BLSPubkey, Epoch, Fork, Slot, SignedBeaconBlock, Root} from "@chainsafe/lodestar-types";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {Keypair, PrivateKey} from "@chainsafe/bls";
+import {ILogger} from "@chainsafe/lodestar-utils/lib/logger";
+import {toHexString} from "@chainsafe/ssz";
+import {
+  computeEpochAtSlot,
+  computeSigningRoot,
+  DomainType,
+  getDomain
+} from "@chainsafe/lodestar-beacon-state-transition";
+import {IValidatorDB} from "../";
 import {IApiClient} from "../api";
 
-
 export default class BlockProposingService {
-  private config: IBeaconConfig;
-  // @ts-ignore
-  private provider: IApiClient;
-  private keypair: Keypair;
-  private db: IValidatorDB;
-  private logger: ILogger;
+
+  private readonly config: IBeaconConfig;
+  private readonly provider: IApiClient;
+  private readonly privateKey: PrivateKey;
+  private readonly publicKey: BLSPubkey;
+  private readonly db: IValidatorDB;
+  private readonly logger: ILogger;
+
+  private nextProposalSlots: Slot[] = [];
 
   public constructor(
     config: IBeaconConfig,
@@ -28,42 +35,91 @@ export default class BlockProposingService {
     logger: ILogger
   ) {
     this.config = config;
-    this.keypair = keypair;
+    this.privateKey = keypair.privateKey;
+    this.publicKey = keypair.publicKey.toBytesCompressed();
     this.provider = provider;
     this.db = db;
     this.logger = logger;
   }
 
+  public start = async (): Promise<void> => {
+    //trigger getting duties for current epoch
+    const slot = this.provider.getCurrentSlot();
+    this.onNewEpoch(computeEpochAtSlot(this.config, slot));
+  };
+
+  public onNewEpoch = async (epoch: Epoch): Promise<void> => {
+    const proposerDuties = await this.provider.validator.getProposerDuties(epoch, [this.publicKey]);
+    if(!proposerDuties) {
+      return;
+    }
+    this.nextProposalSlots = proposerDuties.filter((proposerDuty) => {
+      return this.config.types.BLSPubkey.equals(proposerDuty.proposerPubkey, this.publicKey);
+    }).map((duty) => duty.slot);
+  };
+
+  public onNewSlot = async(slot: Slot): Promise<void> => {
+    if(this.nextProposalSlots.includes(slot)) {
+      const {fork, genesisValidatorsRoot} = await this.provider.beacon.getFork();
+      await this.createAndPublishBlock(slot, fork, genesisValidatorsRoot);
+    }
+  };
+
   /**
    * IFF a validator is selected construct a block to propose.
    */
-  public async createAndPublishBlock(slot: Slot, fork: Fork): Promise<BeaconBlock | null> {
+  public async createAndPublishBlock(
+    slot: Slot, fork: Fork, genesisValidatorsRoot: Root): Promise<SignedBeaconBlock | null> {
     if(await this.hasProposedAlready(slot)) {
-      this.logger.info(`[Validator] Already proposed block in current epoch: ${computeEpochOfSlot(this.config, slot)}`);
+      this.logger.info(`Already proposed block in current epoch: ${computeEpochAtSlot(this.config, slot)}`);
       return null;
     }
-    const block = await this.provider.validator.produceBlock(
-      slot,
-      this.keypair.privateKey.signMessage(
-        hashTreeRoot(computeEpochOfSlot(this.config, slot), this.config.types.Epoch),
-        // eslint-disable-next-line @typescript-eslint/no-object-literal-type-assertion
-        getDomain(this.config, {fork} as BeaconState, DomainType.RANDAO, computeEpochOfSlot(this.config, slot))
-      ).toBytesCompressed()
+    this.logger.info(`Validator is proposer at slot ${slot}`);
+    const epoch = computeEpochAtSlot(this.config, slot);
+    const randaoDomain = getDomain(
+      this.config,
+      {fork, genesisValidatorsRoot} as BeaconState,
+      DomainType.RANDAO,
+      epoch
     );
+    const randaoSigningRoot = computeSigningRoot(this.config, this.config.types.Epoch, epoch, randaoDomain);
+    let block;
+    try {
+      block = await this.provider.validator.produceBlock(
+        slot,
+        this.publicKey,
+        this.privateKey.signMessage(
+          randaoSigningRoot
+        ).toBytesCompressed()
+      );
+    } catch (e) {
+      this.logger.error(`Failed to produce block for slot ${slot}`, e);
+    }
     if(!block) {
       return null;
     }
-    block.signature = this.keypair.privateKey.signMessage(
-      signingRoot(block, this.config.types.BeaconBlock),
-      // eslint-disable-next-line @typescript-eslint/no-object-literal-type-assertion
-      getDomain(this.config, {fork} as BeaconState, DomainType.BEACON_PROPOSER, computeEpochOfSlot(this.config, slot))
-    ).toBytesCompressed();
-    await this.storeBlock(block);
-    await this.provider.validator.publishBlock(block);
-    this.logger.info(
-      `Proposed block with hash 0x${signingRoot(block, this.config.types.BeaconBlock).toString("hex")}`
+    const proposerDomain = getDomain(
+      this.config,
+      {fork, genesisValidatorsRoot} as BeaconState,
+      DomainType.BEACON_PROPOSER,
+      computeEpochAtSlot(this.config, slot)
     );
-    return block;
+    const blockSigningRoot = computeSigningRoot(this.config, this.config.types.BeaconBlock, block, proposerDomain);
+
+    const signedBlock: SignedBeaconBlock = {
+      message: block,
+      signature: this.privateKey.signMessage(blockSigningRoot).toBytesCompressed(),
+    };
+    await this.storeBlock(signedBlock);
+    try {
+      await this.provider.validator.publishBlock(signedBlock);
+      this.logger.info(
+        `Proposed block with hash ${toHexString(this.config.types.BeaconBlock.hashTreeRoot(block))} and slot ${slot}`
+      );
+    } catch (e) {
+      this.logger.error(`Failed to publish block for slot ${slot}`, e);
+    }
+    return signedBlock;
   }
 
   public getRpcClient(): IApiClient {
@@ -72,12 +128,12 @@ export default class BlockProposingService {
 
   private async hasProposedAlready(slot: Slot): Promise<boolean> {
     // get last proposed block from database and check if belongs in same epoch
-    const lastProposedBlock = await this.db.getBlock(this.keypair.publicKey.toBytesCompressed());
+    const lastProposedBlock = await this.db.getBlock(this.publicKey);
     if(!lastProposedBlock) return  false;
-    return computeEpochOfSlot(this.config, lastProposedBlock.slot) === computeEpochOfSlot(this.config, slot);
+    return this.config.types.Slot.equals(lastProposedBlock.message.slot, slot);
   }
 
-  private async storeBlock(block: BeaconBlock): Promise<void> {
-    await this.db.setBlock(this.keypair.publicKey.toBytesCompressed(), block);
+  private async storeBlock(signedBlock: SignedBeaconBlock): Promise<void> {
+    await this.db.setBlock(this.publicKey, signedBlock);
   }
 }

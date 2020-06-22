@@ -1,12 +1,12 @@
-import {IFastifyServer} from "../../index";
 import fastify, {DefaultQuery} from "fastify";
-import {IApiModules} from "../../../interface";
 import {IncomingMessage, Server, ServerResponse} from "http";
-import {assembleBlock} from "../../../../chain/factory/block";
-import {toJson} from "@chainsafe/eth2.0-utils";
+import {LodestarRestApiEndpoint} from "../../interface";
+import {fromHex} from "@chainsafe/lodestar-utils";
 
 interface IQuery extends DefaultQuery {
   slot: number;
+  // eslint-disable-next-line camelcase
+  proposer_pubkey: string;
   // eslint-disable-next-line camelcase
   randao_reveal: string;
 }
@@ -16,11 +16,14 @@ const opts: fastify.RouteShorthandOptions<Server, IncomingMessage, ServerRespons
   schema: {
     querystring: {
       type: "object",
-      required: ["slot", "randao_reveal"],
+      required: ["slot", "proposer_pubkey", "randao_reveal"],
       properties: {
         slot: {
           type: "integer",
           minimum: 0
+        },
+        "proposer_pubkey": {
+          type: "string",
         },
         "randao_reveal": {
           type: "string"
@@ -30,24 +33,20 @@ const opts: fastify.RouteShorthandOptions<Server, IncomingMessage, ServerRespons
   }
 };
 
-export const registerBlockProductionEndpoint = (fastify: IFastifyServer, modules: IApiModules): void => {
+export const registerBlockProductionEndpoint: LodestarRestApiEndpoint = (fastify, {api, config}): void => {
   fastify.get<IQuery>(
     "/block",
     opts,
     async (request, reply) => {
-      const block = await assembleBlock(
-        modules.config,
-        modules.chain,
-        modules.db,
-        modules.opPool,
-        modules.eth1,
+      const block = await api.validator.produceBlock(
         request.query.slot,
-        Buffer.from(request.query.randao_reveal)
+        fromHex(request.query.proposer_pubkey),
+        fromHex(request.query.randao_reveal)
       );
       reply
         .code(200)
         .type("application/json")
-        .send(toJson(block));
+        .send(config.types.BeaconBlock.toJson(block, {case: "snake"}));
     }
   );
 };

@@ -1,13 +1,13 @@
 /**
- * @module chores
+ * @module tasks
  */
 
 import {ITask} from "../interface";
 import {IBeaconDb} from "../../db/api";
-import {Checkpoint} from "@chainsafe/eth2.0-types";
-import {computeEpochOfSlot} from "@chainsafe/eth2.0-state-transition";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-import {ILogger} from "../../logger";
+import {Checkpoint} from "@chainsafe/lodestar-types";
+import {computeEpochAtSlot} from "@chainsafe/lodestar-beacon-state-transition";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {ILogger} from  "@chainsafe/lodestar-utils/lib/logger";
 
 export interface IArchiveBlockModules {
   db: IBeaconDb;
@@ -33,21 +33,20 @@ export class ArchiveBlocksTask implements ITask {
   }
 
   public async run(): Promise<void> {
-    const blocks = (await this.db.block.getAll()).filter(
+    const blocks = (await this.db.block.values()).filter(
       (block) =>
-        computeEpochOfSlot(this.config, block.slot) <= this.finalizedCheckpoint.epoch
+        computeEpochAtSlot(this.config, block.message.slot) < this.finalizedCheckpoint.epoch
     );
-    this.logger.info(`Started archiving ${blocks.length} block `
+    const fromSlot = blocks.length > 0? Math.min(...blocks.map(block => block.message.slot)) : undefined;
+    const toSlot = blocks.length > 0? Math.max(...blocks.map(block => block.message.slot)) : undefined;
+    this.logger.info(`Started archiving ${blocks.length} blocks from slot ${fromSlot} to ${toSlot}`
         +`(finalized epoch #${this.finalizedCheckpoint.epoch})...`
     );
     await Promise.all([
-      this.db.blockArchive.addMany(blocks),
-      this.db.block.deleteManyByValue(blocks)
+      this.db.blockArchive.batchAdd(blocks),
+      this.db.block.batchRemove(blocks)
     ]);
-    this.logger.info(`Archiving of ${blocks.length} finalized blocks completed `
+    this.logger.info(`Archiving of ${blocks.length} finalized blocks from slot ${fromSlot} to ${toSlot} completed `
         + `(finalized epoch #${this.finalizedCheckpoint.epoch})`);
   }
-
-
-
 }

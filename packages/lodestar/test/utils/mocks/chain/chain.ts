@@ -1,45 +1,89 @@
 import {EventEmitter} from "events";
 
-import {
-  Attestation,
-  BeaconBlock,
-  BeaconState,
-  Deposit,
-  Eth1Data,
-  number64, Slot,
-  uint16,
-  uint64
-} from "@chainsafe/eth2.0-types";
+import {Number64, Uint16, Uint64, ForkDigest, ENRForkID, Checkpoint, Slot, SignedBeaconBlock, BeaconState} from "@chainsafe/lodestar-types";
 import {IBeaconChain, ILMDGHOST} from "../../../../src/chain";
-import {generateState} from "../../state";
-import {ProgressiveMerkleTree} from "@chainsafe/eth2.0-utils";
+import {IBeaconClock} from "../../../../src/chain/clock/interface";
+import {computeForkDigest, EpochContext} from "@chainsafe/lodestar-beacon-state-transition";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {generateEmptySignedBlock} from "../../block";
+
+export interface IMockChainParams {
+  genesisTime: Number64;
+  chainId: Uint16;
+  networkId: Uint64;
+  state: BeaconState;
+  config: IBeaconConfig;
+}
 
 export class MockBeaconChain extends EventEmitter implements IBeaconChain {
-  public latestState: BeaconState;
   public forkChoice: ILMDGHOST;
-  public chainId: uint16;
-  public networkId: uint64;
+  public chainId: Uint16;
+  public networkId: Uint64;
+  public clock: IBeaconClock;
 
-  public constructor({genesisTime, chainId, networkId}) {
+  private epochCtx: EpochContext;
+  private state: BeaconState|null;
+  private config: IBeaconConfig;
+
+  public constructor({genesisTime, chainId, networkId, state, config}: Partial<IMockChainParams>) {
     super();
-    this.latestState = generateState({genesisTime});
-    this.chainId = chainId;
-    this.networkId = networkId;
+    this.chainId = chainId || 0;
+    this.networkId = networkId || 0n;
+    this.state = state;
+    this.config = config;
   }
 
-  public async start(): Promise<void> {}
-  public async stop(): Promise<void> {}
-  public async receiveAttestation(attestation: Attestation): Promise<void> {}
-  public async receiveBlock(block: BeaconBlock): Promise<void> {}
-  public async applyForkChoiceRule(): Promise<void> {}
-  public async isValidBlock(state: BeaconState, block: BeaconBlock): Promise<boolean> {
-    return true;
+  getHeadBlock(): Promise<| null> {
+    return undefined;
   }
-  public async advanceState(slot?: Slot): Promise<void>{}
-  initializeBeaconChain(genesisState: BeaconState, merkleTree: ProgressiveMerkleTree): Promise<void> {
-    throw new Error("Method not implemented.");
+
+  public async getHeadState(): Promise<BeaconState| null> {
+    return this.state;
   }
-  isInitialized(): boolean {
-    return !!this.latestState;
+
+  public getEpochContext(): EpochContext {
+    return this.epochCtx;
+  }
+
+  public async getBlockAtSlot(slot: Slot): Promise<SignedBeaconBlock|null> {
+    const block = generateEmptySignedBlock();
+    block.message.slot = slot;
+    return block;
+  }
+
+  public async getFinalizedCheckpoint(): Promise<Checkpoint> {
+    return this.state.finalizedCheckpoint;
+  }
+
+  public get currentForkDigest(): ForkDigest {
+    return computeForkDigest(this.config, this.state.fork.currentVersion, this.state.genesisValidatorsRoot);
+  }
+
+  public async initializeBeaconChain(): Promise<void> {
+    return undefined;
+  }
+
+  public async getENRForkID(): Promise<ENRForkID> {
+    return {
+      forkDigest: Buffer.alloc(4),
+      nextForkEpoch: 100,
+      nextForkVersion: Buffer.alloc(4),
+    };
+  }
+
+  receiveAttestation(): Promise<void> {
+    return undefined;
+  }
+
+  receiveBlock(): Promise<void> {
+    return undefined;
+  }
+
+  start(): Promise<void> {
+    return undefined;
+  }
+
+  stop(): Promise<void> {
+    return undefined;
   }
 }

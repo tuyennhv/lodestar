@@ -1,16 +1,14 @@
 /* eslint-disable camelcase */
-import {IFastifyServer} from "../../index";
-import fastify, {DefaultQuery} from "fastify";
-import {IApiModules} from "../../../interface";
 import {IncomingMessage, Server, ServerResponse} from "http";
-import {toJson} from "@chainsafe/eth2.0-utils";
-import {produceAttestation} from "../../../impl/validator";
+import fastify, {DefaultQuery} from "fastify";
+import {fromHexString} from "@chainsafe/ssz";
+import {LodestarRestApiEndpoint} from "../../interface";
 
 interface IQuery extends DefaultQuery {
   validator_pubkey: string;
   poc_bit: number;
   slot: number;
-  shard: number;
+  attestation_committee_index: number;
 }
 
 
@@ -18,16 +16,12 @@ const opts: fastify.RouteShorthandOptions<Server, IncomingMessage, ServerRespons
   schema: {
     querystring: {
       type: "object",
-      required: ["validator_pubkey", "poc_bit", "slot", "shard"],
+      required: ["validator_pubkey", "slot", "attestation_committee_index"],
       properties: {
         "validator_pubkey": {
           type: "string"
         },
-        "poc_bit": {
-          type: "integer",
-          minimum: 0
-        },
-        shard: {
+        "attestation_committee_index": {
           type: "integer",
           minimum: 0
         },
@@ -40,21 +34,20 @@ const opts: fastify.RouteShorthandOptions<Server, IncomingMessage, ServerRespons
   }
 };
 
-export const registerAttestationProductionEndpoint = (fastify: IFastifyServer, modules: IApiModules): void => {
+export const registerAttestationProductionEndpoint: LodestarRestApiEndpoint = (fastify, {api, config}): void => {
   fastify.get<IQuery>(
     "/attestation",
     opts,
     async (request, reply) => {
-      const attestation = await produceAttestation(
-        {db: modules.db, chain: modules.chain, config: modules.config},
-        Buffer.from(request.query.validator_pubkey.replace("0x", ""), "hex"),
-        request.query.shard,
+      const responseValue = await api.validator.produceAttestation(
+        fromHexString(request.query.validator_pubkey),
+        request.query.attestation_committee_index,
         request.query.slot
       );
       reply
         .code(200)
         .type("application/json")
-        .send(toJson(attestation));
+        .send(config.types.Attestation.toJson(responseValue, {case: "snake"}));
     }
   );
 };

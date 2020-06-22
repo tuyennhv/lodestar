@@ -1,0 +1,10 @@
+{
+  "extends": "../../.babelrc",
+  "plugins": [
+    ["babel-plugin-inline-import", {
+      "extensions": [
+        ".yaml"
+      ]
+    }]
+  ]
+}

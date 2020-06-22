@@ -1,44 +1,34 @@
-import {IFastifyServer} from "../../index";
-import fastify, {DefaultBody, DefaultHeaders, DefaultParams, DefaultQuery} from "fastify";
-import {IApiModules} from "../../../interface";
-import {IncomingMessage, Server, ServerResponse} from "http";
-import {fromJson} from "@chainsafe/eth2.0-utils";
-import {Attestation} from "@chainsafe/eth2.0-types";
+import fastify, {DefaultHeaders, DefaultParams, DefaultQuery} from "fastify";
+import {LodestarRestApiEndpoint} from "../../interface";
+import {Json} from "@chainsafe/ssz";
 
-interface IBody extends DefaultBody {
-  attestation: object;
-}
+type IBody = Json[];
 
-
-const opts: fastify.RouteShorthandOptions<
-Server, IncomingMessage, ServerResponse, DefaultQuery, DefaultParams, DefaultHeaders, IBody> = {
+const opts: fastify.RouteShorthandOptions = {
   schema: {
     body: {
-      type: "object",
-      required: ["attestation"],
-      properties: {
-        attestation: {
-          type: "object"
-        },
-      }
+      type: "array"
     },
   }
 };
 
-export const registerAttestationPublishEndpoint = (fastify: IFastifyServer, modules: IApiModules): void => {
-  fastify.post<DefaultQuery, DefaultParams, DefaultQuery, IBody>(
+export const registerAttestationPublishEndpoint: LodestarRestApiEndpoint = (fastify, {api, config}): void => {
+  fastify.post<DefaultQuery, DefaultParams, DefaultHeaders, IBody>(
     "/attestation",
     opts,
     async (request, reply) => {
       try {
-        await modules.opPool.attestations.receive(
-          fromJson<Attestation>(
-            request.body.attestation,
-            modules.config.types.Attestation
-          )
-        );
+        await Promise.all([
+          request.body.map((payload) => {
+            return api.validator.publishAttestation(
+              config.types.Attestation.fromJson(payload, {case: "snake"})
+            );
+          })
+        ]);
+
       } catch (e) {
-        modules.logger.error(e.message);
+        reply.code(500).send();
+        return;
       }
       reply
         .code(200)

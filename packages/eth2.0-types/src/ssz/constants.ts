@@ -1,2 +1,0 @@
-export const DEPOSIT_CONTRACT_TREE_DEPTH = 2 ** 5; // 32
-export const JUSTIFICATION_BITS_LENGTH = 4;

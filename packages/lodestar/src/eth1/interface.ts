@@ -1,79 +1,52 @@
+/* eslint-disable @typescript-eslint/interface-name-prefix */
+
 /**
  * @module eth1
  */
 
 import {EventEmitter} from "events";
 
-import {BeaconState, Deposit, Epoch, Eth1Data, Hash, number64} from "@chainsafe/eth2.0-types";
-import {Block} from "ethers/providers";
+import {Eth1Data, Number64, DepositData} from "@chainsafe/lodestar-types";
+import {ethers} from "ethers";
 import StrictEventEmitter from "strict-event-emitter-types";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
+
+export type IEthersAbi = Array<string | ethers.utils.EventFragment | ethers.utils.ParamType>;
+
+export interface IDepositEvent extends DepositData {
+  blockNumber: number;
+  index: number;
+}
 
 export interface IEth1Events {
-  block: (block: Block) => void;
-  deposit: (index: number64, deposit: Deposit) => void;
+  deposit: (index: Number64, depositData: DepositData) => void;
+  eth1Data: (timestamp: number, eth1Data: Eth1Data, blockNumber: number) => void;
 }
 
 export type Eth1EventEmitter = StrictEventEmitter<EventEmitter, IEth1Events>;
 
 /**
- * The IEth1Notifier service watches the Eth1.0 chain for relevant events
+ * The IEth1Notifier service watches the Eth1 chain for IEth1Events
  */
 export interface IEth1Notifier extends Eth1EventEmitter {
-  /**
-   * If there isn't Eth2Genesis events in past logs, it should fetch
-   * all the deposit logs from block at which contract is deployed.
-   * If there is Eth2Genesis event in logs it should just listen for new eth1 blocks.
-   */
   start(): Promise<void>;
   stop(): Promise<void>;
 
   /**
-   * Process new block events sent from the Eth 1.0 chain
-   */
-  processBlockHeadUpdate(blockNumber: number|string): Promise<void>;
-
-  /**
-   * Process a Desposit log which has been received from the Eth 1.0 chain
-   */
-  processDepositLog(
-    pubkey: string,
-    withdrawalCredentials: string,
-    amount: string,
-    signature: string,
-    merkleTreeIndex: string
-  ): Promise<void>;
-
-  /**
-   * Obtains Deposit logs between given range of blocks
-   * @param fromBlock either block hash or block number
-   * @param toBlock optional, if not submitted it will assume latest
-   */
-  processPastDeposits(
-    fromBlock: string | number64, toBlock?: string | number64
-  ): Promise<void>;
-
-  /**
-   * Return the latest block
-   */
-  getHead(): Promise<Block>;
-
-  /**
    * Returns block by block hash or number
-   * @param blockHashOrBlockNumber
+   * @param blockTag
    */
-  getBlock(blockHashOrBlockNumber: string | number): Promise<Block>;
+  getBlock(blockTag: string | number): Promise<ethers.providers.Block>;
 
   /**
-   * Return the merkle root of the deposits
+   * Return deposit events at a block
    */
-  depositRoot(block?: string | number): Promise<Hash>;
+  getDepositEvents(blockTag: string | number): Promise<IDepositEvent[]>;
+}
 
-  /**
-   * Retruns deposit count
-   * @param block
-   */
-  depositCount(block?: string | number): Promise<number64>;
-
-  getEth1Data(config: IBeaconConfig, state: BeaconState, currentEpoh: Epoch): Promise<Eth1Data>;
+/**
+ * Eth1 block range.
+ */
+export interface Eth1BlockRange {
+  fromNumber: number;
+  toNumber: number;
 }

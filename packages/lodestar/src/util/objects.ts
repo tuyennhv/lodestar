@@ -1,18 +1,19 @@
 /**
  * @module util/objects
  */
-import {AnySSZType, hashTreeRoot} from "@chainsafe/ssz";
+import {Type} from "@chainsafe/ssz";
+import {toHexString} from "@chainsafe/ssz";
 
 interface IElementDescription {
   index: number;
   count: number;
 }
 
-export function mostFrequent<T>(array: T[], type: AnySSZType): T[] {
+export function mostFrequent<T>(type: Type<T>, array: T[]): T[] {
   const hashMap: Map<string, IElementDescription> = new Map<string, IElementDescription>();
   array.forEach((e, index) => {
     //We can optimize this by using faster hash like https://github.com/bevacqua/hash-sum
-    const hash = hashTreeRoot(e, type).toString("hex");
+    const hash = toHexString(type.hashTreeRoot(e));
 
     const desc = hashMap.get(hash);
     if(desc) {
@@ -33,4 +34,20 @@ export function mostFrequent<T>(array: T[], type: AnySSZType): T[] {
     }
   }
   return results;
+}
+
+export function sszEqualPredicate<T>(type: Type<T>): (a: T, b: T) => boolean {
+  return (a: T, b: T) => {
+    return type.equals(a, b);
+  };
+}
+
+export function arrayIntersection<T>(arr1: T[], arr2: T[], predicate: (a: T, b: T) => boolean): T[] {
+  return arr1.filter(
+    (item1) => {
+      return arr2.findIndex((item2) => {
+        return predicate(item1, item2);
+      }) !== -1;
+    }
+  );
 }

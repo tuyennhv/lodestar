@@ -1,15 +1,16 @@
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-import {BLSPubkey, Epoch, ValidatorDuty, ValidatorIndex,BeaconState, Slot} from "@chainsafe/eth2.0-types";
-import {getCommitteeAssignment} from "@chainsafe/eth2.0-state-transition";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {AttesterDuty, BeaconState, BLSPubkey, Epoch, ValidatorIndex} from "@chainsafe/lodestar-types";
+import {getCommitteeAssignment} from "@chainsafe/lodestar-beacon-state-transition";
+import {intDiv} from "@chainsafe/lodestar-utils";
 
 
-export function assembleValidatorDuty(
+export function assembleAttesterDuty(
   config: IBeaconConfig,
   validator: {publicKey: BLSPubkey; index: ValidatorIndex},
   state: BeaconState,
-  epoch: Epoch,
-  proposerSlotMapping: Record<ValidatorIndex, Slot>): ValidatorDuty  {
-  let duty: ValidatorDuty = generateEmptyValidatorDuty(validator.publicKey);
+  epoch: Epoch
+): AttesterDuty  {
+  let duty: AttesterDuty = generateEmptyAttesterDuty(validator.publicKey);
   const committeeAssignment = getCommitteeAssignment(
     config,
     state,
@@ -19,26 +20,22 @@ export function assembleValidatorDuty(
   if (committeeAssignment) {
     duty = {
       ...duty,
-      attestationShard: committeeAssignment.shard,
+      aggregatorModulo: Math.max(
+        1,
+        intDiv(committeeAssignment.validators.length, config.params.TARGET_AGGREGATORS_PER_COMMITTEE)
+      ),
+      committeeIndex: committeeAssignment.committeeIndex,
       attestationSlot: committeeAssignment.slot,
-      committeeIndex: committeeAssignment.validators.indexOf(validator.index)
-    };
-  }
-  if (proposerSlotMapping[validator.index] && proposerSlotMapping[validator.index] !== 0) {
-    duty = {
-      ...duty,
-      blockProposalSlot: proposerSlotMapping[validator.index]
     };
   }
 
   return duty;
 }
 
-export function generateEmptyValidatorDuty(publicKey: BLSPubkey, duty?: Partial<ValidatorDuty>): ValidatorDuty {
+export function generateEmptyAttesterDuty(publicKey: BLSPubkey, duty?: Partial<AttesterDuty>): AttesterDuty {
   return {
     validatorPubkey: publicKey,
-    blockProposalSlot: null,
-    attestationShard: null,
+    aggregatorModulo: 1,
     attestationSlot: null,
     committeeIndex: null,
     ...duty

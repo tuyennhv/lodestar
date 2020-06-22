@@ -1,25 +1,21 @@
 import sinon from "sinon";
-import { expect } from "chai";
+import {expect} from "chai";
 
-import { config } from "@chainsafe/eth2.0-config/lib/presets/mainnet";
+import {config} from "@chainsafe/lodestar-config/lib/presets/mainnet";
 import * as blockBodyAssembly from "../../../../../src/chain/factory/block/body";
-import * as blockTransitions from "@chainsafe/eth2.0-state-transition";
-import { OpPool } from "../../../../../src/opPool";
-import { assembleBlock } from "../../../../../src/chain/factory/block";
-import { EthersEth1Notifier } from "../../../../../src/eth1";
-import { generateState } from "../../../../utils/state";
-import { StatefulDagLMDGHOST } from "../../../../../../lodestar/src/chain/forkChoice";
-import { BeaconChain } from "../../../../../src/chain";
-import { generateEmptyBlock } from "../../../../utils/block";
-import { BlockRepository, MerkleTreeRepository, StateRepository } from "../../../../../src/db/api/beacon/repositories";
-import { ProgressiveMerkleTree } from "@chainsafe/eth2.0-utils";
-import { MerkleTreeSerialization } from "../../../../../src/util/serialization";
+import * as blockTransitions from "@chainsafe/lodestar-beacon-state-transition";
+import {assembleBlock} from "../../../../../src/chain/factory/block";
+import {generateState} from "../../../../utils/state";
+import {StatefulDagLMDGHOST} from "../../../../../../lodestar/src/chain/forkChoice";
+import {BeaconChain} from "../../../../../src/chain";
+import {generateEmptyBlock, generateEmptySignedBlock} from "../../../../utils/block";
+import {StubbedBeaconDb, StubbedChain} from "../../../../utils/stub";
 
 describe("block assembly", function () {
 
   const sandbox = sinon.createSandbox();
 
-  let assembleBodyStub: any, chainStub: any, forkChoiceStub: any, stateTransitionStub: any, opPool: any, beaconDB: any, eth1: any;
+  let assembleBodyStub: any, chainStub: StubbedChain, forkChoiceStub: any, stateTransitionStub: any, beaconDB: StubbedBeaconDb;
 
   beforeEach(() => {
     assembleBodyStub = sandbox.stub(blockBodyAssembly, "assembleBody");
@@ -27,16 +23,10 @@ describe("block assembly", function () {
 
 
     forkChoiceStub = sandbox.createStubInstance(StatefulDagLMDGHOST);
-    chainStub = sandbox.createStubInstance(BeaconChain);
+    chainStub = sandbox.createStubInstance(BeaconChain) as unknown as StubbedChain;
     chainStub.forkChoice = forkChoiceStub;
 
-    opPool = sandbox.createStubInstance(OpPool);
-    beaconDB = {
-      block: sandbox.createStubInstance(BlockRepository),
-      state: sandbox.createStubInstance(StateRepository),
-      merkleTree: sandbox.createStubInstance(MerkleTreeRepository)
-    };
-    eth1 = sandbox.createStubInstance(EthersEth1Notifier);
+    beaconDB = new StubbedBeaconDb(sandbox);
   });
 
   afterEach(() => {
@@ -44,20 +34,20 @@ describe("block assembly", function () {
   });
 
   it("should assemble block", async function () {
-    const head = chainStub.forkChoice.head();
-    beaconDB.block.get.withArgs(head).returns(generateEmptyBlock());
-    beaconDB.state.get.resolves(generateState({ slot: 1 }));
-    beaconDB.merkleTree.getProgressiveMerkleTree.resolves(ProgressiveMerkleTree.empty(32, new MerkleTreeSerialization(config)));
+    const head = chainStub.forkChoice.headBlockRoot();
+    chainStub.getHeadBlock.resolves(generateEmptySignedBlock());
+    chainStub.getHeadState.resolves(generateState({slot: 1}) as any);
+    beaconDB.depositDataRoot.getTreeBacked.resolves(config.types.DepositDataRootList.tree.defaultValue());
     assembleBodyStub.resolves(generateEmptyBlock().body);
     stateTransitionStub.returns(generateState());
     try {
-      const result = await assembleBlock(config, chainStub, beaconDB, opPool, eth1, 1, Buffer.alloc(96, 0));
+      const result = await assembleBlock(config, chainStub, beaconDB, 1, 1, Buffer.alloc(96, 0));
       expect(result).to.not.be.null;
       expect(result.slot).to.equal(1);
       expect(result.stateRoot).to.not.be.null;
       expect(result.parentRoot).to.not.be.null;
-      expect(beaconDB.state.get.calledOnce).to.be.true;
-      expect(beaconDB.block.get.calledOnceWith(head));
+      expect(chainStub.getHeadState.calledOnce).to.be.true;
+      expect(chainStub.getHeadBlock.calledOnce).to.be.true;
       expect(assembleBodyStub.calledOnce).to.be.true;
     } catch (e) {
       expect.fail(e.stack);

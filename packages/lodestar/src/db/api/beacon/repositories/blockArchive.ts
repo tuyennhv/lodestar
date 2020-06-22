@@ -1,32 +1,56 @@
-import {BeaconBlock} from "@chainsafe/eth2.0-types";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
-import {BulkRepository} from "../repository";
-import {IDatabaseController} from "../../../controller";
-import {Bucket, encodeKey} from "../../../schema";
-import {serialize} from "@chainsafe/ssz";
+import {SignedBeaconBlock, Slot} from "@chainsafe/lodestar-types";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {bytesToInt} from "@chainsafe/lodestar-utils";
+
+import {IDatabaseController, IFilterOptions} from "../../../controller";
+import {Bucket} from "../../schema";
+import {Repository} from "./abstract";
+
+export interface IBlockFilterOptions extends IFilterOptions<Slot> {
+  step?: number;
+}
 
 /**
  * Stores finalized blocks. Block slot is identifier.
  */
-export class BlockArchiveRepository extends BulkRepository<BeaconBlock> {
+export class BlockArchiveRepository extends Repository<Slot, SignedBeaconBlock> {
 
   public constructor(
     config: IBeaconConfig,
-    db: IDatabaseController
+    db: IDatabaseController<Buffer, Buffer>,
   ) {
-    super(config, db, Bucket.blockArchive, config.types.BeaconBlock);
+    super(config, db, Bucket.blockArchive, config.types.SignedBeaconBlock);
   }
 
-  public async addMany(blocks: BeaconBlock[]): Promise<void> {
-    await this.db.batchPut(
-      blocks.map((block) => ({
-        key: encodeKey(this.bucket, block.slot),
-        value: serialize(block, this.type)
-      }))
-    );
+  public decodeKey(data: Buffer): number {
+    return bytesToInt(super.decodeKey(data) as unknown as Uint8Array, "be");
   }
 
-  public async add(value: BeaconBlock): Promise<void> {
-    return this.set(value.slot, value);
+  public getId(value: SignedBeaconBlock): Slot {
+    return value.message.slot;
+  }
+
+  public async values(opts?: IBlockFilterOptions): Promise<SignedBeaconBlock[]> {
+    const result = [];
+    for await (const value of this.valuesStream(opts)) {
+      result.push(value);
+    }
+    return result;
+  }
+
+  public valuesStream(opts?: IBlockFilterOptions): AsyncIterable<SignedBeaconBlock> {
+    const dbFilterOpts = this.dbFilterOptions(opts);
+    const firstSlot = dbFilterOpts.gt ?
+      this.decodeKey(dbFilterOpts.gt) + 1 :
+      this.decodeKey(dbFilterOpts.gte);
+    const valuesStream = super.valuesStream(opts);
+    const step = opts && opts.step || 1;
+    return (async function* () {
+      for await (const value of valuesStream) {
+        if ((value.message.slot - firstSlot) % step === 0) {
+          yield value;
+        }
+      }
+    })();
   }
 }

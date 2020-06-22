@@ -3,26 +3,24 @@
  */
 
 import {
-  BeaconBlock,
-  BeaconState,
-  BLSPubkey,
-  Hash,
-  ValidatorIndex,
-} from "@chainsafe/eth2.0-types";
+  SignedBeaconBlock,
+} from "@chainsafe/lodestar-types";
 
 import {
   AttestationRepository,
   AttesterSlashingRepository,
   BlockRepository,
-  ChainRepository,
-  DepositRepository,
-  MerkleTreeRepository,
+  DepositDataRepository,
+  DepositDataRootRepository,
   ProposerSlashingRepository,
-  StateRepository,
-  TransfersRepository,
-  VoluntaryExitRepository
+  StateArchiveRepository,
+  VoluntaryExitRepository,
+  AggregateAndProofRepository,
+  BlockArchiveRepository,
+  BadBlockRepository,
+  Eth1DataRepository,
 } from "./repositories";
-import {BlockArchiveRepository} from "./repositories/blockArchive";
+import {StateCache} from "./stateCache";
 
 /**
  * The DB service manages the data layer of the beacon chain
@@ -31,50 +29,34 @@ import {BlockArchiveRepository} from "./repositories/blockArchive";
  */
 export interface IBeaconDb {
 
-  chain: ChainRepository;
+  // bad blocks
+  badBlock: BadBlockRepository;
 
-  state: StateRepository;
-
+  // unfinalized blocks
   block: BlockRepository;
 
+  // unfinalized states
+  stateCache: StateCache;
+
+  // finalized blocks
   blockArchive: BlockArchiveRepository;
 
+  // finalized states
+  stateArchive: StateArchiveRepository;
+
+  // op pool
   attestation: AttestationRepository;
-
+  aggregateAndProof: AggregateAndProofRepository;
   voluntaryExit: VoluntaryExitRepository;
-
-  transfer: TransfersRepository;
-
   proposerSlashing: ProposerSlashingRepository;
-
   attesterSlashing: AttesterSlashingRepository;
+  depositData: DepositDataRepository;
 
-  deposit: DepositRepository;
+  // eth1 processing
 
-  merkleTree: MerkleTreeRepository;
+  // all deposit data roots and merkle tree
+  depositDataRoot: DepositDataRootRepository;
+  eth1Data: Eth1DataRepository;
 
-  /**
-   * Returns validator index coresponding to validator
-   * public key in registry,
-   * @param publicKey
-   */
-  getValidatorIndex(publicKey: BLSPubkey): Promise<ValidatorIndex | null>;
-
-  /**
-   * Stores block and state and set them as chain head
-   */
-  storeChainHead(
-    block: BeaconBlock,
-    state: BeaconState
-  ): Promise<void>;
-
-  /**
-   * Fetches block and state by root and sets them as chain head
-   * @param blockRoot
-   * @param stateRoot
-   */
-  updateChainHead(
-    blockRoot: Hash,
-    stateRoot: Hash
-  ): Promise<void>;
+  processBlockOperations(signedBlock: SignedBeaconBlock): Promise<void>;
 }

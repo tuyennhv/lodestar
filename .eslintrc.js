@@ -50,9 +50,12 @@ module.exports = {
     "@typescript-eslint/no-unused-vars": ["error", {
       "varsIgnorePattern": "^_"
     }],
+    "@typescript-eslint/ban-ts-ignore": "warn",
     "@typescript-eslint/no-use-before-define": "off",
     "@typescript-eslint/semi": "error",
     "@typescript-eslint/type-annotation-spacing": "error",
+    //it doesn't recognize module/lib/something (like mainnet & minimal presets)
+    "import/no-duplicates": "off",
     "import/no-extraneous-dependencies": ["error", {
       "devDependencies": false,
       "optionalDependencies": false,
@@ -62,6 +65,8 @@ module.exports = {
     "max-len": ["error", {
       "code": 120
     }],
+    //if --fix is run it messes imports like /lib/presets/minimal & /lib/presets/mainnet
+    "import/no-duplicates": "off",
     "new-parens": "error",
     "no-caller": "error",
     "no-bitwise": "off",

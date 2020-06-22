@@ -1,37 +1,51 @@
-import {BeaconBlock, BeaconState, bytes32, Fork, number64, SyncingStatus, uint64} from "@chainsafe/eth2.0-types";
+import {
+  BeaconBlock,
+  BeaconState,
+  Bytes32,
+  Fork,
+  Number64,
+  SyncingStatus,
+  Root,
+  Uint64
+} from "@chainsafe/lodestar-types";
 import {IBeaconApi} from "../../../src/api/interface/beacon";
-import {getEmptyBlock} from "@chainsafe/lodestar/lib/chain/genesis/genesis";
+import {generateEmptyBlock} from "../block";
+import {ZERO_HASH} from "@chainsafe/lodestar-beacon-state-transition";
 
 export interface IMockBeaconApiOpts {
-  version?: bytes32;
+  version?: Bytes32;
   fork?: Fork;
   head?: BeaconBlock;
-  genesisTime?: number64;
+  genesisTime?: Number64;
 }
 
 export class MockBeaconApi implements IBeaconApi {
-  private version: bytes32;
+  private version: Bytes32;
   private fork: Fork;
   private head: BeaconBlock;
-  private genesisTime: number64;
+  private genesisTime: Number64;
 
   public constructor(opts?: IMockBeaconApiOpts) {
     this.version = opts && opts.version || Buffer.alloc(0);
     this.fork = opts && opts.fork
       || {previousVersion: Buffer.alloc(0), currentVersion: Buffer.alloc(0), epoch: 0};
-    this.head = opts && opts.head || getEmptyBlock();
-    this.genesisTime = opts && opts.genesisTime || Date.now();
+    this.head = opts && opts.head || generateEmptyBlock();
+    this.genesisTime = (opts && opts.genesisTime) || (Date.now() / 1000);
   }
 
-  public async getClientVersion(): Promise<bytes32> {
+  public async getValidator(): Promise<any> {
+    throw new Error("Method not implemented.");
+  }
+
+  public async getClientVersion(): Promise<Bytes32> {
     return this.version;
   }
 
-  public async getFork(): Promise<{fork: Fork; chainId: uint64}> {
-    return {fork: this.fork, chainId: 1n};
+  public async getFork(): Promise<{fork: Fork; chainId: Uint64; genesisValidatorsRoot: Root}> {
+    return {fork: this.fork, chainId: 1n, genesisValidatorsRoot: ZERO_HASH};
   }
 
-  public async getGenesisTime(): Promise<number64> {
+  public async getGenesisTime(): Promise<Number64> {
     return this.genesisTime;
   }
 

@@ -2,106 +2,76 @@
  * @module db/api/beacon
  */
 
-import {BeaconBlock, BeaconState, BLSPubkey, Hash, ValidatorIndex,} from "@chainsafe/eth2.0-types";
+import {SignedBeaconBlock} from "@chainsafe/lodestar-types";
 import {DatabaseService, IDatabaseApiOptions} from "../abstract";
 import {IBeaconDb} from "./interface";
 import {
+  AggregateAndProofRepository,
   AttestationRepository,
   AttesterSlashingRepository,
+  BadBlockRepository,
   BlockRepository,
-  ChainRepository,
-  DepositRepository,
-  MerkleTreeRepository,
+  BlockArchiveRepository,
+  DepositDataRepository,
+  DepositDataRootRepository,
+  Eth1DataRepository,
   ProposerSlashingRepository,
-  StateRepository,
-  TransfersRepository,
+  StateArchiveRepository,
   VoluntaryExitRepository
 } from "./repositories";
-import {BlockArchiveRepository} from "./repositories/blockArchive";
+import {StateCache} from "./stateCache";
 
 export class BeaconDb extends DatabaseService implements IBeaconDb {
 
-  public chain: ChainRepository;
-
-  public state: StateRepository;
-
+  public badBlock: BadBlockRepository;
   public block: BlockRepository;
-
+  public stateCache: StateCache;
   public blockArchive: BlockArchiveRepository;
+  public stateArchive: StateArchiveRepository;
 
   public attestation: AttestationRepository;
-
+  public aggregateAndProof: AggregateAndProofRepository;
   public voluntaryExit: VoluntaryExitRepository;
-
-  public transfer: TransfersRepository;
-
   public proposerSlashing: ProposerSlashingRepository;
-
   public attesterSlashing: AttesterSlashingRepository;
+  public depositData: DepositDataRepository;
 
-  public deposit: DepositRepository;
-
-  public merkleTree: MerkleTreeRepository;
+  public depositDataRoot: DepositDataRootRepository;
+  public eth1Data: Eth1DataRepository;
 
   public constructor(opts: IDatabaseApiOptions) {
     super(opts);
-    this.chain = new ChainRepository(this.config, this.db);
-    this.state = new StateRepository(this.config, this.db, this.chain);
-    this.block = new BlockRepository(this.config, this.db, this.chain);
+    this.badBlock = new BadBlockRepository(this.config, this.db);
+    this.block = new BlockRepository(this.config, this.db);
+    this.stateCache = new StateCache();
     this.blockArchive = new BlockArchiveRepository(this.config, this.db);
+    this.stateArchive = new StateArchiveRepository(this.config, this.db);
     this.attestation = new AttestationRepository(this.config, this.db);
+    this.aggregateAndProof = new AggregateAndProofRepository(this.config, this.db);
     this.voluntaryExit = new VoluntaryExitRepository(this.config, this.db);
-    this.transfer = new TransfersRepository(this.config, this.db);
     this.proposerSlashing = new ProposerSlashingRepository(this.config, this.db);
     this.attesterSlashing = new AttesterSlashingRepository(this.config, this.db);
-    this.deposit = new DepositRepository(this.config, this.db);
-    this.merkleTree = new MerkleTreeRepository(this.config, this.db);
+    this.depositData = new DepositDataRepository(this.config, this.db);
+    this.depositDataRoot = new DepositDataRootRepository(this.config, this.db);
+    this.eth1Data = new Eth1DataRepository(this.config, this.db);
   }
 
-  public async storeChainHead(
-    block: BeaconBlock,
-    state: BeaconState
-  ): Promise<void> {
+
+  /**
+   * Remove stored operations based on a newly processed block
+   */
+  public async processBlockOperations(signedBlock: SignedBeaconBlock): Promise<void> {
     await Promise.all([
-      this.block.add(block),
-      this.state.set(block.stateRoot, state),
-    ]);
-    const slot = block.slot;
-    await Promise.all([
-      this.chain.setLatestStateRoot(block.stateRoot),
-      this.chain.setChainHeadSlot(slot)
+      this.voluntaryExit.batchRemove(signedBlock.message.body.voluntaryExits),
+      this.depositData.deleteOld(signedBlock.message.body.eth1Data.depositCount),
+      this.proposerSlashing.batchRemove(signedBlock.message.body.proposerSlashings),
+      this.attesterSlashing.batchRemove(signedBlock.message.body.attesterSlashings),
+      this.aggregateAndProof.removeIncluded(signedBlock.message.body.attestations)
     ]);
   }
 
-  public async updateChainHead(
-    blockRoot: Hash,
-    stateRoot: Hash
-  ): Promise<void> {
-    const [storedBlock, storedState] = await Promise.all([
-      this.block.get(blockRoot),
-      this.state.get(stateRoot),
-    ]);
-    // block should already be set
-    if(!storedBlock) {
-      throw new Error("unknown block root");
-    }
-    // state should already be set
-    if(!storedState) {
-      throw new Error("unknown state root");
-    }
-    const slot = storedBlock.slot;
-    await Promise.all([
-      this.chain.setLatestStateRoot(storedBlock.stateRoot),
-      this.chain.setChainHeadSlot(slot)
-    ]);
+  public async stop(): Promise<void> {
+    await super.stop();
+    this.stateCache.clear();
   }
-
-
-
-  public async getValidatorIndex(publicKey: BLSPubkey): Promise<ValidatorIndex> {
-    const state = await this.state.getLatest();
-    //TODO: cache this (hashmap)
-    return state.validators.findIndex(value => value.pubkey.equals(publicKey));
-  }
-
 }

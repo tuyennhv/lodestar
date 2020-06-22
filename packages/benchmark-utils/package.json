@@ -1,6 +1,6 @@
 {
   "name": "@chainsafe/benchmark-utils",
-  "version": "0.1.0",
+  "version": "0.9.0",
   "description": "Utils for assembling of benchmark suites",
   "author": "ChainSafe Systems",
   "license": "Apache-2.0",
@@ -23,7 +23,7 @@
     "build:types": "tsc --declaration --incremental --emitDeclarationOnly",
     "build:lib": "babel src -x .ts -d lib --source-maps",
     "build:docs": "typedoc --out docs src",
-    "check-types": "tsc --noEmit --incremental",
+    "check-types": "tsc --noEmit",
     "lint": "eslint --color --ext .ts src/",
     "lint:fix": "eslint --color --ext .ts src/ --fix",
     "prepublishOnly": "yarn build"

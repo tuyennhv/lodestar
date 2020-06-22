@@ -5,13 +5,23 @@
 import LibP2p from "libp2p";
 import TCP from "libp2p-tcp";
 import Mplex from "libp2p-mplex";
+import {NOISE} from "libp2p-noise";
 import SECIO from "libp2p-secio";
 import Bootstrap from "libp2p-bootstrap";
 import MDNS from "libp2p-mdns";
 import PeerInfo from "peer-info";
+import {ENRInput, Discv5Discovery} from "@chainsafe/discv5";
+
 
 export interface ILibp2pOptions {
   peerInfo: PeerInfo;
+  autoDial: boolean;
+  discv5: {
+    bindAddr: string;
+    enr: ENRInput;
+    bootEnrs?: ENRInput[];
+  };
+  peerDiscovery?: (typeof Bootstrap | typeof MDNS | typeof Discv5Discovery)[];
   bootnodes?: string[];
 }
 
@@ -20,10 +30,14 @@ export class NodejsNode extends LibP2p {
     const defaults = {
       peerInfo: options.peerInfo,
       modules: {
-        connEncryption: [SECIO],
+        connEncryption: [NOISE, SECIO],
         transport: [TCP],
         streamMuxer: [Mplex],
-        peerDiscovery: [Bootstrap, MDNS],
+        peerDiscovery: options.peerDiscovery || [
+          Bootstrap,
+          MDNS,
+          Discv5Discovery,
+        ],
       },
       config: {
         relay: {
@@ -34,14 +48,20 @@ export class NodejsNode extends LibP2p {
           }
         },
         peerDiscovery: {
-          autoDial: true,
+          autoDial: options.autoDial,
           mdns: {
+            peerInfo: options.peerInfo
           },
           bootstrap: {
+            enabled: !!(options.bootnodes && options.bootnodes.length),
             interval: 2000,
-            enabled: true,
             list: (options.bootnodes || []) as string[],
-          }
+          },
+          discv5: {
+            enr: options.discv5.enr,
+            bindAddr: options.discv5.bindAddr,
+            bootEnrs: options.discv5.bootEnrs || [],
+          },
         }
       }
     };

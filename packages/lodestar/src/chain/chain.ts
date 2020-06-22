@@ -2,435 +2,366 @@
  * @module chain
  */
 
-import assert from "assert";
 import {EventEmitter} from "events";
-import {clone, hashTreeRoot, serialize, signingRoot} from "@chainsafe/ssz";
-import {Attestation, BeaconBlock, BeaconState, Hash, Slot, uint16, uint64} from "@chainsafe/eth2.0-types";
-import {IBeaconConfig} from "@chainsafe/eth2.0-config";
+import {toHexString, TreeBacked} from "@chainsafe/ssz";
+import {
+  Attestation,
+  BeaconState,
+  Checkpoint,
+  ENRForkID,
+  Eth1Data,
+  ForkDigest,
+  SignedBeaconBlock,
+  Uint16,
+  Uint64,
+  Slot,
+} from "@chainsafe/lodestar-types";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {computeEpochAtSlot, computeForkDigest, EpochContext} from "@chainsafe/lodestar-beacon-state-transition";
+import {ILogger} from "@chainsafe/lodestar-utils/lib/logger";
+import {intToBytes} from "@chainsafe/lodestar-utils";
 
-import {DEPOSIT_CONTRACT_TREE_DEPTH, GENESIS_SLOT} from "../constants";
+import {EMPTY_SIGNATURE, GENESIS_SLOT} from "../constants";
 import {IBeaconDb} from "../db";
 import {IEth1Notifier} from "../eth1";
-import {ILogger} from "../logger";
 import {IBeaconMetrics} from "../metrics";
-
 import {getEmptyBlock, initializeBeaconStateFromEth1, isValidGenesisState} from "./genesis/genesis";
+import {ILMDGHOST, ArrayDagLMDGHOST} from "./forkChoice";
 
-import {processSlots, stateTransition,
-  computeEpochOfSlot,
-  getAttestationDataSlot,
-  getAttestingIndices,
-  isActiveValidator
-  ,getCurrentSlot} from "@chainsafe/eth2.0-state-transition";
-import {ILMDGHOST, StatefulDagLMDGHOST} from "./forkChoice";
-
-import {ChainEventEmitter, IBeaconChain} from "./interface";
-import {processSortedDeposits} from "../util/deposits";
+import {ChainEventEmitter, IAttestationProcessor, IBeaconChain} from "./interface";
 import {IChainOptions} from "./options";
-import {OpPool} from "../opPool";
-import {Block} from "ethers/providers";
-import fs from "fs";
-import {sleep} from "../util/sleep";
-import {AsyncQueue, queue} from "async";
-import FastPriorityQueue from "fastpriorityqueue";
-
-import {ProgressiveMerkleTree} from "@chainsafe/eth2.0-utils";
-import {MerkleTreeSerialization} from "../util/serialization";
+import {AttestationProcessor} from "./attestation";
+import {IBeaconClock} from "./clock/interface";
+import {LocalClock} from "./clock/local/LocalClock";
+import {BlockProcessor} from "./blocks";
+import {sortBlocks} from "../sync/utils";
 
 export interface IBeaconChainModules {
   config: IBeaconConfig;
-  opPool: OpPool;
   db: IBeaconDb;
   eth1: IEth1Notifier;
   logger: ILogger;
   metrics: IBeaconMetrics;
+  forkChoice?: ILMDGHOST;
 }
 
 export interface IBlockProcessJob {
-  block: BeaconBlock;
+  signedBlock: SignedBeaconBlock;
   trusted: boolean;
+  reprocess: boolean;
 }
 
 export class BeaconChain extends (EventEmitter as { new(): ChainEventEmitter }) implements IBeaconChain {
 
-  public chain: string;
-  public _latestState: BeaconState = null;
+  public readonly chain: string;
   public forkChoice: ILMDGHOST;
-  public chainId: uint16;
-  public networkId: uint64;
-
+  public chainId: Uint16;
+  public networkId: Uint64;
+  public clock: IBeaconClock;
+  private epochCtx: EpochContext;
   private readonly config: IBeaconConfig;
-  private db: IBeaconDb;
-  private opPool: OpPool;
-  private eth1: IEth1Notifier;
-  private logger: ILogger;
-  private metrics: IBeaconMetrics;
-  private opts: IChainOptions;
-  private attestationProcessingQueue: AsyncQueue<Function>;
-  private blockProcessingQueue: FastPriorityQueue<IBlockProcessJob>; //sort by slot number
+  private readonly db: IBeaconDb;
+  private readonly eth1: IEth1Notifier;
+  private readonly logger: ILogger;
+  private readonly metrics: IBeaconMetrics;
+  private readonly opts: IChainOptions;
+  private blockProcessor: BlockProcessor;
+  private _currentForkDigest: ForkDigest;
+  private attestationProcessor: IAttestationProcessor;
 
-  public constructor(opts: IChainOptions, {config, db, eth1, opPool, logger, metrics}: IBeaconChainModules) {
+  public constructor(
+    opts: IChainOptions, {config, db, eth1, logger, metrics, forkChoice}: IBeaconChainModules) {
     super();
     this.opts = opts;
     this.chain = opts.name;
     this.config = config;
+    this.epochCtx = new EpochContext(config);
     this.db = db;
     this.eth1 = eth1;
-    this.opPool = opPool;
     this.logger = logger;
     this.metrics = metrics;
-    this.forkChoice = new StatefulDagLMDGHOST();
+    this.forkChoice = forkChoice || new ArrayDagLMDGHOST(config);
     this.chainId = 0; // TODO make this real
     this.networkId = 0n; // TODO make this real
-    this.attestationProcessingQueue = queue(async (task: Function) => {
-      await task();
-    }, 1);
-    this.blockProcessingQueue = new FastPriorityQueue((a: IBlockProcessJob, b: IBlockProcessJob) => {
-      return a.block.slot < b.block.slot;
-    });
+    this.attestationProcessor = new AttestationProcessor(this, this.forkChoice, {config, db, logger});
+    this.blockProcessor = new BlockProcessor(
+      config, logger, db, this.epochCtx, this.forkChoice, metrics, this, this.attestationProcessor,
+    );
+  }
+
+  public async getHeadState(): Promise<BeaconState|null> {
+    return this.db.stateCache.get(this.forkChoice.headStateRoot());
+  }
+
+  public async getHeadBlock(): Promise<SignedBeaconBlock|null> {
+    return this.db.block.get(this.forkChoice.headBlockRoot());
+  }
+
+  public getEpochContext(): EpochContext {
+    return this.epochCtx.copy();
+  }
+
+  public async getBlockAtSlot(slot: Slot): Promise<SignedBeaconBlock|null> {
+    const finalizedCheckpoint = this.forkChoice.getFinalized();
+    if (finalizedCheckpoint.epoch > computeEpochAtSlot(this.config, slot)) {
+      return this.db.blockArchive.get(slot);
+    }
+    const summary = this.forkChoice.getBlockSummaryAtSlot(slot);
+    if (!summary) {
+      return null;
+    }
+    return this.db.block.get(summary.blockRoot);
+  }
+
+  public async getFinalizedCheckpoint(): Promise<Checkpoint> {
+    return this.forkChoice.getFinalized();
   }
 
   public async start(): Promise<void> {
-    const state = this.latestState || await this.db.state.getLatest();
-    // if state doesn't exist in the db, the chain maybe hasn't started
-    if(!state) {
-      // check every block if genesis
-      this.logger.info("Chain not started, listening for genesis block");
-      this.eth1.on("block", this.checkGenesis);
-    }
-    this.latestState = state;
+    this.logger.verbose("Starting chain");
+    // if we run from scratch, we want to wait for genesis state
+    const state = await this.waitForState();
+    this.epochCtx.loadState(state);
     this.logger.info("Chain started, waiting blocks and attestations");
+    this.clock = new LocalClock(this.config, state.genesisTime);
+    await this.clock.start();
+    this.forkChoice.start(state.genesisTime, this.clock);
+    await this.blockProcessor.start();
+    this._currentForkDigest =  computeForkDigest(this.config, state.fork.currentVersion, state.genesisValidatorsRoot);
+    this.on("forkDigestChanged", this.handleForkDigestChanged);
+    await this.restoreHeadState(state);
   }
 
   public async stop(): Promise<void> {
-    this.eth1.removeListener("block", this.checkGenesis);
+    await this.forkChoice.stop();
+
+    if (this.clock) {
+      await this.clock.stop();
+    }
+
+    await this.blockProcessor.stop();
+    this.removeListener("forkDigestChanged", this.handleForkDigestChanged);
   }
 
-  public get latestState(): BeaconState {
-    return clone(this._latestState, this.config.types.BeaconState);
-  }
-
-  public set latestState(state: BeaconState) {
-    this._latestState = state;
-  }
-
-  public isInitialized(): boolean {
-    return !!this.latestState;
+  public get currentForkDigest(): ForkDigest {
+    return this._currentForkDigest;
   }
 
   public async receiveAttestation(attestation: Attestation): Promise<void> {
-    const attestationHash = hashTreeRoot(attestation, this.config.types.Attestation);
-    this.logger.info(`Received attestation ${attestationHash.toString("hex")}`);
-    const latestState = this.latestState;
-    try {
-      const attestationSlot: Slot = getAttestationDataSlot(this.config, latestState, attestation.data);
-      if(attestationSlot + this.config.params.SLOTS_PER_EPOCH < latestState.slot) {
-        this.logger.verbose(`Attestation ${attestationHash.toString("hex")} is too old. Ignored.`);
-        return;
-      }
-    } catch (e) {
+    return this.attestationProcessor.receiveAttestation(attestation);
+  }
+
+  public async receiveBlock(signedBlock: SignedBeaconBlock, trusted = false, reprocess = false): Promise<void> {
+    this.blockProcessor.receiveBlock(signedBlock, trusted, reprocess);
+  }
+
+  public async initializeBeaconChain(genesisState: TreeBacked<BeaconState>): Promise<void> {
+    // don't want to initialize from a genesis state if already run beacon node
+    const lastKnownState = await this.db.stateArchive.lastValue();
+    if (lastKnownState) {
+      this.logger.info(`Found finalized state at slot ${lastKnownState.slot}, starting chain from there`);
       return;
     }
-    this.attestationProcessingQueue.push(async () => {
-      return this.processAttestation(latestState, attestation, attestationHash);
-    });
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  public async receiveBlock(block: BeaconBlock, trusted: boolean = false): Promise<void> {
-    const blockHash = signingRoot(block, this.config.types.BeaconBlock);
-    this.logger.info(
-      `Received block with hash 0x${blockHash.toString("hex")}` +
-      `at slot ${block.slot}. Current state slot ${this.latestState.slot}`
-    );
-
-    if(!await this.db.block.has(block.parentRoot)) {
-      this.emit("unknownBlockRoot", block.parentRoot);
-    }
-
-    if(block.slot <= this.latestState.slot) {
-      this.logger.warn(
-        `Block ${blockHash.toString("hex")} is in past. ` +
-        "Probably fork choice/double propose/processed block. Ignored for now."
-      );
-      return;
-    }
-
-    if(block.slot > this.latestState.slot) {
-      //either block came too early or we are suppose to skip some slots
-      const latestBlock = await this.db.block.getChainHead();
-      if(!block.parentRoot.equals(signingRoot(latestBlock, this.config.types.BeaconBlock))){
-        //block processed too early
-        this.logger.warn(`Block ${blockHash.toString("hex")} tried to be processed too early. Requeue...`);
-        //wait a bit to give new block a chance
-        await sleep(500);
-        // add to priority queue
-        this.blockProcessingQueue.add({block, trusted});
-        return;
-      }
-    }
-
-    await this.processBlock({block, trusted: false}, blockHash);
-    const nextBlockInQueue = this.blockProcessingQueue.peek();
-    while (nextBlockInQueue) {
-      const latestBlock = await this.db.block.getChainHead();
-      if (nextBlockInQueue.block.parentRoot.equals(signingRoot(latestBlock, this.config.types.BeaconBlock))) {
-        await this.processBlock(nextBlockInQueue, signingRoot(nextBlockInQueue, this.config.types.BeaconBlock));
-        this.blockProcessingQueue.poll();
-      } else{
-        return;
-      }
-    }
-  }
-
-  public async advanceState(slot?: Slot): Promise<void> {
-    const targetSlot = slot || getCurrentSlot(this.config, this.latestState.genesisTime);
-    this.logger.info(`Manually advancing slot from state slot ${this.latestState.slot} to ${targetSlot} `);
-    const state = this.latestState;
-
-    try {
-      processSlots(this.config, state, targetSlot);
-    } catch (e) {
-      this.logger.warn(`Failed to advance slot mannually because ${e.message}`);
-    }
-    this.latestState = state;
-    await this.db.state.add(state);
-    await this.db.chain.setLatestStateRoot(hashTreeRoot(state, this.config.types.BeaconState));
-  }
-
-  public async applyForkChoiceRule(): Promise<void> {
-    const currentRoot = await this.db.chain.getChainHeadRoot();
-    const headRoot = this.forkChoice.head();
-    if (currentRoot && !currentRoot.equals(headRoot)) {
-      const block = await this.db.block.get(headRoot);
-      await this.db.updateChainHead(headRoot, block.stateRoot);
-      this.logger.info(`Fork choice changed head to 0x${headRoot.toString("hex")}`);
-    }
-  }
-
-  public async initializeBeaconChain(genesisState: BeaconState, merkleTree: ProgressiveMerkleTree): Promise<void> {
-    this.logger.info(`Initializing beacon chain with genesisTime ${genesisState.genesisTime}`);
     const genesisBlock = getEmptyBlock();
-    const stateRoot = hashTreeRoot(genesisState, this.config.types.BeaconState);
+    const stateRoot = this.config.types.BeaconState.hashTreeRoot(genesisState);
     genesisBlock.stateRoot = stateRoot;
-    const blockRoot = signingRoot(genesisBlock, this.config.types.BeaconBlock);
-    this.latestState = genesisState;
+    const blockRoot = this.config.types.BeaconBlock.hashTreeRoot(genesisBlock);
+    this.logger.info(`Initializing beacon chain with state root ${toHexString(stateRoot)}`
+            + ` and genesis block root ${toHexString(blockRoot)}`
+    );
+    const justifiedFinalizedCheckpoint = {
+      root: blockRoot,
+      epoch: computeEpochAtSlot(this.config, genesisBlock.slot)
+    };
+    this.forkChoice.addBlock({
+      slot: genesisBlock.slot,
+      blockRoot: blockRoot,
+      stateRoot: stateRoot,
+      parentRoot: Buffer.alloc(32),
+      justifiedCheckpoint: justifiedFinalizedCheckpoint,
+      finalizedCheckpoint: justifiedFinalizedCheckpoint,
+    });
+    await this.db.stateCache.add(genesisState);
+    // Determine whether a genesis state already in
+    // the database matches what we were provided
+    const storedGenesisBlock = await this.getBlockAtSlot(GENESIS_SLOT);
+    if (storedGenesisBlock !== null &&
+      !this.config.types.Root.equals(genesisBlock.stateRoot, storedGenesisBlock.message.stateRoot)) {
+      throw new Error("A genesis state with different configuration was detected! Please clean the database.");
+    }
     await Promise.all([
-      this.db.storeChainHead(genesisBlock, genesisState),
-      this.db.chain.setJustifiedBlockRoot(blockRoot),
-      this.db.chain.setFinalizedBlockRoot(blockRoot),
-      this.db.chain.setJustifiedStateRoot(stateRoot),
-      this.db.chain.setFinalizedStateRoot(stateRoot),
-      this.db.merkleTree.set(genesisState.eth1DepositIndex, merkleTree.toObject())
+      this.db.block.add({message: genesisBlock, signature: EMPTY_SIGNATURE}),
+      this.db.stateArchive.add(genesisState),
     ]);
-    this.forkChoice.addBlock(genesisBlock.slot, blockRoot, Buffer.alloc(32));
-    this.forkChoice.setJustified(blockRoot);
-    this.forkChoice.setFinalized(blockRoot);
     this.logger.info("Beacon chain initialized");
   }
 
-  public async isValidBlock(state: BeaconState, block: BeaconBlock): Promise<boolean> {
-    // The parent block with root block.previous_block_root has been processed and accepted.
-    // const hasParent = await this.db.block.has(block.parentRoot);
-    // if (!hasParent) {
-    //   return false;
-    // }
-    // An Ethereum 1.0 block pointed to by the state.
-    // latest_eth1_data.block_hash has been processed and accepted.
-    // TODO: implement
-
-    // The node's Unix time is greater than or equal to state.
-    const stateSlotTime = state.genesisTime + ((block.slot - GENESIS_SLOT) * this.config.params.SECONDS_PER_SLOT);
-    return Math.floor(Date.now() / 1000) >= stateSlotTime;
+  public async getENRForkID(): Promise<ENRForkID> {
+    const state = await this.getHeadState();
+    const currentVersion = state.fork.currentVersion;
+    const nextVersion = this.config.params.ALL_FORKS && this.config.params.ALL_FORKS.find(
+      fork => this.config.types.Version.equals(currentVersion, intToBytes(fork.previousVersion, 4)));
+    return {
+      forkDigest: this.currentForkDigest,
+      nextForkVersion: nextVersion? intToBytes(nextVersion.currentVersion, 4) : currentVersion.valueOf() as Uint8Array,
+      nextForkEpoch: nextVersion? nextVersion.epoch : Number.MAX_SAFE_INTEGER,
+    };
   }
 
-  private processAttestation = async (latestState: BeaconState, attestation: Attestation, attestationHash: Hash) => {
-    const validators = getAttestingIndices(
-      this.config, latestState, attestation.data, attestation.aggregationBits);
-    const balances = validators.map((index) => latestState.balances[index]);
-    for (let i = 0; i < validators.length; i++) {
-      this.forkChoice.addAttestation(attestation.data.beaconBlockRoot, validators[i], balances[i]);
-    }
-    this.logger.info(`Attestation ${attestationHash.toString("hex")} passed to fork choice`);
-    this.emit("processedAttestation", attestation);
-  };
-
-  private processBlock = async (job: IBlockProcessJob, blockHash: Hash) => {
-
-    const isValidBlock = await this.isValidBlock(this.latestState, job.block);
-    assert(isValidBlock);
-    this.logger.info(`0x${blockHash.toString("hex")} is valid, running state transition...`);
-
-    const pre = this.latestState;
-    // process current slot
-    const post = await this.runStateTransition(job.block, pre);
-
-    this.logger.info(
-      `Slot ${job.block.slot} Block 0x${blockHash.toString("hex")} ` +
-      `State ${hashTreeRoot(post, this.config.types.BeaconState).toString("hex")} passed state transition`
-    );
-    await this.opPool.processBlockOperations(job.block);
-    job.block.body.attestations.forEach((attestation) => {
-      this.receiveAttestation(attestation);
-    });
-
-    if (this.opts.dumpState) {
-      this.dumpState(job.block, pre, post);
-    }
-
-    this.metrics.currentSlot.inc(1);
-
-    // forward processed block for additional processing
-    this.emit("processedBlock", job.block);
-  };
-
-  private dumpState(block: BeaconBlock, pre: BeaconState, post: BeaconState): void {
-    const baseDir = "./state-dumps/";
-    const curDir = this.latestState.slot;
-    const full = baseDir + curDir;
-    if (!fs.existsSync(baseDir)) {
-      fs.mkdirSync(baseDir);
-    }
-
-    fs.mkdirSync(baseDir + curDir);
-
-    const sblock = serialize(block, this.config.types.BeaconBlock);
-    const sPre = serialize(pre, this.config.types.BeaconState);
-    const sPost = serialize(post, this.config.types.BeaconState);
-
-    fs.writeFile(full + "/block.ssz", sblock, (e) => {
-      if (e) throw e;
-    });
-    fs.writeFile(full + "/pre.ssz", sPre, (e) => {
-      if (e) throw e;
-    });
-    fs.writeFile(full + "/post.ssz", sPost, (e) => {
-      if (e) throw e;
+  public async waitForBlockProcessed(blockRoot: Uint8Array): Promise<void> {
+    await new Promise((resolve) => {
+      this.on("processedBlock", (signedBlock) => {
+        const root = this.config.types.BeaconBlock.hashTreeRoot(signedBlock.message);
+        if (this.config.types.Root.equals(root, blockRoot)) {
+          resolve();
+        }
+      });
     });
   }
 
   /**
-   *
-   * @param block
-   * @param state
-   * @param trusted if state transition should trust that block is valid
+   * Restore state cache and forkchoice from last finalized state.
    */
-  private async runStateTransition(block: BeaconBlock, state: BeaconState, trusted = false): Promise<BeaconState|null> {
-    const preSlot = state.slot;
-    const preFinalizedEpoch = state.finalizedCheckpoint.epoch;
-    const preJustifiedEpoch = state.currentJustifiedCheckpoint.epoch;
-    // Run the state transition
-    let newState: BeaconState;
-    const blockRoot = signingRoot(block, this.config.types.BeaconBlock);
-    try {
-      // if block is trusted don't verify state roots, proposer or signature
-      newState = stateTransition(this.config, state, block, !trusted, !trusted, !trusted);
-    } catch (e) {
-      // store block root in db and terminate
-      await this.db.block.storeBadBlock(blockRoot);
-      this.logger.warn(`Found bad block, block root: 0x${blockRoot.toString("hex")} ` + e.message);
+  private async restoreHeadState(lastKnownState: TreeBacked<BeaconState>): Promise<void> {
+    const finalizedCheckpoint = lastKnownState.finalizedCheckpoint;
+    const finalizedEpoch = finalizedCheckpoint.epoch;
+    const finalizedRoot = finalizedCheckpoint.root;
+    this.logger.info(`Found last known finalized state at epoch #${finalizedEpoch} root ${toHexString(finalizedRoot)}`);
+    this.logger.profile("restoreHeadState");
+    this.db.stateCache.add(lastKnownState);
+    // the block respective to finalized epoch is still in block db
+    const allBlocks = await this.db.block.values();
+    if (!allBlocks || allBlocks.length === 0) {
       return;
     }
-    this.latestState = newState;
-    // On successful transition, update system state
-    await this.db.storeChainHead(block, newState);
-    this.forkChoice.addBlock(block.slot, blockRoot, block.parentRoot);
-    // await this.applyForkChoiceRule();
-    await this.updateDepositMerkleTree(newState);
-    // update metrics
-    this.metrics.currentSlot.set(block.slot);
-
-    // Post-epoch processing
-    const currentEpoch = computeEpochOfSlot(this.config, newState.slot);
-    if (computeEpochOfSlot(this.config, preSlot) < currentEpoch) {
-      this.emit("processedCheckpoint", {epoch: currentEpoch, root: blockRoot});
-      // Update FFG Checkpoints
-      // Newly justified epoch
-      if (preJustifiedEpoch < newState.currentJustifiedCheckpoint.epoch) {
-        const justifiedBlockRoot = newState.currentJustifiedCheckpoint.root;
-        const justifiedBlock = await this.db.block.get(justifiedBlockRoot);
-        this.logger.important(`Epoch ${computeEpochOfSlot(this.config, justifiedBlock.slot)} is justified!`);
-        await Promise.all([
-          this.db.chain.setJustifiedStateRoot(justifiedBlock.stateRoot),
-          this.db.chain.setJustifiedBlockRoot(justifiedBlockRoot),
-        ]);
-        this.forkChoice.setJustified(justifiedBlockRoot);
-        this.emit("justifiedCheckpoint", newState.currentJustifiedCheckpoint);
+    const sortedBlocks = sortBlocks(allBlocks);
+    const firstBlock = allBlocks[0];
+    const lastBlock = allBlocks[allBlocks.length - 1];
+    let firstSlot = firstBlock.message.slot;
+    let lastSlot = lastBlock.message.slot;
+    this.logger.info(`Found ${allBlocks.length} nonfinalized blocks in database from slot ${firstSlot} to ${lastSlot}`);
+    // initially we initialize database with genesis block
+    if (allBlocks.length === 1) {
+      // start from scratch
+      const blockHash = this.config.types.BeaconBlock.hashTreeRoot(firstBlock.message);
+      if (this.config.types.Root.equals(blockHash, this.forkChoice.headBlockRoot())) {
+        this.logger.info("Chain is up to date, no need to restore");
+        return;
       }
-      // Newly finalized epoch
-      if (preFinalizedEpoch < newState.finalizedCheckpoint.epoch) {
-        const finalizedBlockRoot = newState.finalizedCheckpoint.root;
-        const finalizedBlock = await this.db.block.get(finalizedBlockRoot);
-        this.logger.important(`Epoch ${computeEpochOfSlot(this.config, finalizedBlock.slot)} is finalized!`);
-        await Promise.all([
-          this.db.chain.setFinalizedStateRoot(finalizedBlock.stateRoot),
-          this.db.chain.setFinalizedBlockRoot(finalizedBlockRoot),
-        ]);
-        this.forkChoice.setFinalized(finalizedBlockRoot);
-        this.emit("finalizedCheckpoint", newState.finalizedCheckpoint);
-      }
-      this.metrics.previousJustifiedEpoch.set(newState.previousJustifiedCheckpoint.epoch);
-      this.metrics.currentJustifiedEpoch.set(newState.currentJustifiedCheckpoint.epoch);
-      this.metrics.currentFinalizedEpoch.set(newState.finalizedCheckpoint.epoch);
-      this.metrics.currentEpochLiveValidators.set(
-        newState.validators.filter((v) => isActiveValidator(v, currentEpoch)).length
-      );
     }
-    return newState;
-  }
-
-  private async updateDepositMerkleTree(newState: BeaconState): Promise<void> {
-    const [deposits, merkleTree] = await Promise.all([
-      this.db.deposit.getAll(),
-      this.db.merkleTree.getProgressiveMerkleTree(
-        this.config,
-        newState.eth1DepositIndex
-      )
+    const isCheckpointNotGenesis = lastKnownState.slot > GENESIS_SLOT;
+    const stateRoot = this.config.types.BeaconState.hashTreeRoot(lastKnownState);
+    const finalizedBlock = sortedBlocks.find(block => {
+      return (block.message.slot === lastKnownState.slot) &&
+      // at genesis the genesis block's state root is not equal to genesis state root
+      (isCheckpointNotGenesis? this.config.types.Root.equals(block.message.stateRoot, stateRoot) : true);
+    });
+    if (!finalizedBlock) {
+      throw new Error(`Cannot find block for finalized state at slot ${lastKnownState.slot}`);
+    } else {
+      this.logger.info(`Found finalized block at slot ${finalizedBlock.message.slot},
+        root=${toHexString(this.config.types.BeaconBlock.hashTreeRoot(finalizedBlock.message))}`);
+    }
+    // init forkchoice
+    const blockCheckpoint: Checkpoint = {
+      root: this.config.types.BeaconBlock.hashTreeRoot(finalizedBlock.message),
+      epoch: computeEpochAtSlot(this.config, finalizedBlock.message.slot)
+    };
+    this.forkChoice.addBlock({
+      slot: finalizedBlock.message.slot,
+      blockRoot: this.config.types.BeaconBlock.hashTreeRoot(finalizedBlock.message),
+      stateRoot: finalizedBlock.message.stateRoot.valueOf() as Uint8Array,
+      parentRoot: finalizedBlock.message.parentRoot.valueOf() as Uint8Array,
+      justifiedCheckpoint: (isCheckpointNotGenesis)? lastKnownState.currentJustifiedCheckpoint : blockCheckpoint,
+      finalizedCheckpoint: (isCheckpointNotGenesis)? lastKnownState.finalizedCheckpoint : blockCheckpoint
+    });
+    // init state cache
+    this.db.stateCache.add(lastKnownState);
+    // no need to process the finalized block
+    const processedBlocks = sortedBlocks.filter((block) => block.message.slot > finalizedBlock.message.slot);
+    if (!processedBlocks.length) {
+      this.logger.info("No need to process blocks");
+      return;
+    }
+    firstSlot = processedBlocks[0].message.slot;
+    lastSlot = processedBlocks[processedBlocks.length - 1].message.slot;
+    this.logger.info(`Start processing from slot ${firstSlot} to ${lastSlot} to rebuild state cache and forkchoice`);
+    await Promise.all([
+      ...processedBlocks.map(block => this.receiveBlock(block, true, true)),
+      this.waitForBlockProcessed(this.config.types.BeaconBlock.hashTreeRoot(lastBlock.message))
     ]);
-    processSortedDeposits(
-      this.config,
-      deposits,
-      newState.eth1DepositIndex,
-      newState.eth1Data.depositCount,
-      (deposit, index) => {
-        merkleTree.add(
-          index + newState.eth1DepositIndex,
-          hashTreeRoot(deposit.data, this.config.types.DepositData)
-        );
-        return deposit;
-      }
-    );
-    //TODO: remove deposits with index <= newState.depositIndex
-    await this.db.merkleTree.set(newState.eth1DepositIndex, merkleTree.toObject());
+    this.logger.important(`Finish restoring chain head from ${allBlocks.length} blocks`);
+    this.logger.profile("restoreHeadState");
   }
 
-  private checkGenesis = async (eth1Block: Block): Promise<void> => {
-    this.logger.info(`Checking if block ${eth1Block.hash} will form valid genesis state`);
-    const deposits = await this.opPool.deposits.getAll();
-    const merkleTree = ProgressiveMerkleTree.empty(
-      DEPOSIT_CONTRACT_TREE_DEPTH,
-      new MerkleTreeSerialization(this.config)
-    );
-    const depositsWithProof = deposits
-      .map((deposit, index) => {
-        merkleTree.add(index, hashTreeRoot(deposit.data, this.config.types.DepositData));
-        return deposit;
-      })
-      .map((deposit, index) => {
-        deposit.proof = merkleTree.getProof(index);
-        return deposit;
+  private async handleForkDigestChanged(): Promise<void> {
+    this._currentForkDigest = await this.getCurrentForkDigest();
+    this.emit("forkDigest", this._currentForkDigest);
+  }
+
+  private async getCurrentForkDigest(): Promise<ForkDigest> {
+    const state = await this.getHeadState();
+    return computeForkDigest(this.config, state.fork.currentVersion, state.genesisValidatorsRoot);
+  }
+
+  // If we don't have a state yet, we have to wait for genesis state
+  private async waitForState(): Promise<TreeBacked<BeaconState>> {
+    let state: TreeBacked<BeaconState> = await this.db.stateArchive.lastValue();
+    if (!state) {
+      this.logger.info("Chain not started, listening for genesis block");
+      state = await new Promise((resolve) => {
+        const genesisListener = async (timestamp: number, eth1Data: Eth1Data): Promise<void> => {
+          const state = await this.checkGenesis(timestamp, eth1Data);
+          if (state) {
+            this.eth1.removeListener("eth1Data", genesisListener);
+            resolve(state);
+          }
+        };
+        this.eth1.on("eth1Data", genesisListener);
       });
+    }
+    // set metrics based on beacon state
+    this.metrics.currentSlot.set(state.slot);
+    this.metrics.previousJustifiedEpoch.set(state.previousJustifiedCheckpoint.epoch);
+    this.metrics.currentJustifiedEpoch.set(state.currentJustifiedCheckpoint.epoch);
+    this.metrics.currentFinalizedEpoch.set(state.finalizedCheckpoint.epoch);
+    return state;
+  }
+
+  /**
+   * Create a candidate BeaconState from the deposits at a certain time and eth1 state
+   *
+   * Returns the BeaconState if it is valid else null
+   */
+  private checkGenesis = async (timestamp: number, eth1Data: Eth1Data): Promise<TreeBacked<BeaconState> | null> => {
+    const blockHashHex = toHexString(eth1Data.blockHash);
+    this.logger.info(`Checking if block ${blockHashHex} will form valid genesis state`);
+    const depositDatas = await this.db.depositData.values({lt: eth1Data.depositCount});
+    const depositDataRoots = await this.db.depositDataRoot.values({lt: eth1Data.depositCount});
+    this.logger.info(`Found ${depositDatas.length} deposits`);
+    const depositDataRootList = this.config.types.DepositDataRootList.tree.defaultValue();
+    const tree = depositDataRootList.tree();
+
     const genesisState = initializeBeaconStateFromEth1(
       this.config,
-      Buffer.from(eth1Block.hash.replace("0x", ""), "hex"),
-      eth1Block.timestamp,
-      depositsWithProof
+      eth1Data.blockHash,
+      timestamp,
+      depositDatas.map((data, index) => {
+        depositDataRootList.push(depositDataRoots[index]);
+        return {
+          proof: tree.getSingleProof(depositDataRootList.gindexOfProperty(index)),
+          data,
+        };
+      })
     );
-    if(!isValidGenesisState(this.config, genesisState)) {
-      this.logger.info(`Eth1 block ${eth1Block.hash} is NOT forming valid genesis state`);
-      return;
+    if (!isValidGenesisState(this.config, genesisState)) {
+      this.logger.info(`Eth1 block ${blockHashHex} is NOT forming valid genesis state`);
+      return null;
     }
-    this.logger.info(`Initializing beacon chain with eth1 block ${eth1Block.hash}`);
-    await this.initializeBeaconChain(genesisState, merkleTree);
+    this.logger.info(`Initializing beacon chain with eth1 block ${blockHashHex}`);
+    await this.initializeBeaconChain(genesisState as TreeBacked<BeaconState>);
+    this.logger.info(`Genesis state is ready with ${genesisState.validators.length} validators`);
+    return genesisState;
   };
+
 }

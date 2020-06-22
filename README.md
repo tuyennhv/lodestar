@@ -1,7 +1,7 @@
 ![lodestar logo](./assets/300ppi/FullMark-BLACK.png)
 
 # Lodestar Monorepo
-![ETH2.0_Spec_Version 0.8.3](https://img.shields.io/badge/ETH2.0_Spec_Version-0.8.3-2e86c1.svg)
+![ETH2.0_Spec_Version 0.11.1](https://img.shields.io/badge/ETH2.0_Spec_Version-0.11.1-2e86c1.svg)
 [![Discord](https://img.shields.io/discord/593655374469660673.svg?label=Discord&logo=discord)](https://discord.gg/aMxzVcr)
 [![codecov](https://codecov.io/gh/ChainSafe/lodestar/branch/master/graph/badge.svg)](https://codecov.io/gh/ChainSafe/lodestar)
 [![Maintainability](https://api.codeclimate.com/v1/badges/678099476c401e1af503/maintainability)](https://codeclimate.com/github/ChainSafe/lodestar/maintainability)
@@ -9,68 +9,54 @@
 Welcome to the ChainSafe lodestar monorepo!
 This repository contains a suite of Ethereum 2.0 packages.
 
-### [@chainsafe/bls](/packages/bls)
-Ethereum 2.0 BLS signature verification
+## Index
+* [Tl;Dr](#tldr)
+* [Prerequisites](#prerequisites)
+* [Getting Started](#getting-started)
+* [Contributors](#contributors)
+* [Meeting Notes](#meeting-notes)
+* [Donations](#donations)
+* [Packages](#packages)
 
-[![npm](https://img.shields.io/npm/v/@chainsafe/bls)](https://www.npmjs.com/package/@chainsafe/bls)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/bls)
+## Tl;Dr:
 
-### [@chainsafe/ssz](/packages/ssz)
-Simple Serialize
+Lodestar is a Typescript implementation of the Eth 2 Beacon chain spec.
 
-[![npm](https://img.shields.io/npm/v/@chainsafe/ssz)](https://www.npmjs.com/package/@chainsafe/ssz)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/ssz)
+## Prerequisites
 
-### [@chainsafe/ssz-type-schema](/packages/ssz-type-schema)
-Simple Serialize Type Schema
+* [Lerna](https://github.com/lerna/lerna)
+* [Yarn](https://yarnpkg.com/)
 
-[![npm](https://img.shields.io/npm/v/@chainsafe/ssz-type-schema)](https://www.npmjs.com/package/@chainsafe/ssz-type-schema)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/ssz-type-schema)
+## Getting Started
 
-### [@chainsafe/eth2.0-types](/packages/eth2.0-types)
-Typescript types for Ethereum 2.0 datastructures
+To get an instance of Lodestar up & running, start a terminal from the root of the this repo:
 
-[![npm](https://img.shields.io/npm/v/@chainsafe/eth2.0-types)](https://www.npmjs.com/package/@chainsafe/eth2.0-types)
-[![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/eth2.0-types)
+1. Install dependencies accross all packages:
+```
+yarn install
+```
 
-### [@chainsafe/eth2.0-params](/packages/eth2.0-params)
-Beacon chain parameters
+2. Run the build script:
+```
+yarn run build
+```
 
-[![npm](https://img.shields.io/npm/v/@chainsafe/eth2.0-params)](https://www.npmjs.com/package/@chainsafe/eth2.0-params)
-[![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/eth2.0-params)
+3. Lodestar should now be ready for use:
+```
+yarn run cli --help
+```
 
-### [@chainsafe/eth2.0-utils](/packages/eth2.0-utils)
-Utility methods used throughout Lodestar modules.
+## Contributors
+Read our [contributors document](/CONTRIBUTING.md), [submit an issue](https://github.com/ChainSafe/lodestar/issues/new/choose) or talk to us on our [discord](https://discord.gg/yjyvFRP)!
 
-[![npm](https://img.shields.io/npm/v/@chainsafe/eth2.0-utils)](https://www.npmjs.com/package/@chainsafe/eth2.0-utils)
-[![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/eth2.0-utils)
+## Meeting Notes
+Feel free to check out our meeting notes and documents on [HackMD](https://hackmd.io/@wemeetagain/rJTEOdqPS/%2F%40yBpKEsxORheI8AJoIiZj1Q%2FHk_b8XfcV%2F%252F6pRB5amJRLKBGEkeOJA8Cw).
 
-### [@chainsafe/eth2.0-config](/packages/eth2.0-config)
-Beacon chain configuration
+## Donations
+We are a local group of Toronto open source developers. As such, all of our open source work is funded by grants. We all take the time out of our hectic lives to contribute to the Ethereum ecosystem.
+If you want to donate, you can send us ETH at the following address: **lodestar.chainsafe.eth**
 
-[![npm](https://img.shields.io/npm/v/@chainsafe/eth2.0-config)](https://www.npmjs.com/package/@chainsafe/eth2.0-config)
-[![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/eth2.0-config)
-
-### [@chainsafe/eth2.0-state-transition](/packages/eth2.0-state-transition)
-Beacon chain state transition
-
-[![npm](https://img.shields.io/npm/v/@chainsafe/eth2.0-state-transition)](https://www.npmjs.com/package/@chainsafe/eth2.0-state-transition)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/eth2.0-state-transition)
-
-### [@chainsafe/eth2.0-spec-test-util](/packages/eth2.0-spec-test-util)
-Ethereum 2.0 spec test utilities
-
-[![npm](https://img.shields.io/npm/v/@chainsafe/eth2.0-spec-test-util)](https://www.npmjs.com/package/@chainsafe/eth2.0-spec-test-util)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/eth2.0-spec-test-util)
+## Packages
 
 ### [@chainsafe/lodestar](/packages/lodestar)
 Beacon chain implementation
@@ -86,13 +72,45 @@ Eth2 validator client implementation
 [![License: LGPL v3](https://img.shields.io/badge/License-LGPL%20v3-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/lodestar)
 
-## Contributors
-Read our [contributors document](/CONTRIBUTING.md), [submit an issue](https://github.com/ChainSafe/lodestar/issues/new/choose) or talk to us on our [discord](https://discord.gg/yjyvFRP)!
 
-## Meeting Notes
-Feel free to check out our meeting notes on [HackMD](https://hackmd.io/@yBpKEsxORheI8AJoIiZj1Q/Hk_b8XfcV/https%3A%2F%2Fhackmd.io%2Fc%2FHk_b8XfcV%2Fedit%3Fedit?type=book).
+### [@chainsafe/lodestar-types](/packages/lodestar-types)
+Typescript types for Ethereum 2.0 datastructures
 
-## Donations
-We are a local group of Toronto open source developers. As such, all of our open source work is funded by grants. We all take the time out of our hectic lives to contribute to the Ethereum ecosystem.
-If you want to donate, you can send us ETH at the following address: **lodestar.chainsafe.eth**
+[![npm](https://img.shields.io/npm/v/@chainsafe/lodestar-types)](https://www.npmjs.com/package/@chainsafe/lodestar-types)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/lodestar-types)
 
+### [@chainsafe/lodestar-params](/packages/lodestar-params)
+Beacon chain parameters
+
+[![npm](https://img.shields.io/npm/v/@chainsafe/lodestar-params)](https://www.npmjs.com/package/@chainsafe/lodestar-params)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/lodestar-params)
+
+### [@chainsafe/lodestar-utils](/packages/lodestar-utils)
+Utility methods used throughout Lodestar modules.
+
+[![npm](https://img.shields.io/npm/v/@chainsafe/lodestar-utils)](https://www.npmjs.com/package/@chainsafe/lodestar-utils)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/lodestar-utils)
+
+### [@chainsafe/lodestar-config](/packages/lodestar-config)
+Beacon chain configuration
+
+[![npm](https://img.shields.io/npm/v/@chainsafe/lodestar-config)](https://www.npmjs.com/package/@chainsafe/lodestar-config)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/lodestar-config)
+
+### [@chainsafe/lodestar-beacon-state-transition](/packages/lodestar-beacon-state-transition)
+Beacon chain state transition
+
+[![npm](https://img.shields.io/npm/v/@chainsafe/lodestar-beacon-state-transition)](https://www.npmjs.com/package/@chainsafe/lodestar-beacon-state-transition)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/lodestar-beacon-state-transition)
+
+### [@chainsafe/lodestar-spec-test-util](/packages/lodestar-spec-test-util)
+Ethereum 2.0 spec test utilities
+
+[![npm](https://img.shields.io/npm/v/@chainsafe/lodestar-spec-test-util)](https://www.npmjs.com/package/@chainsafe/lodestar-spec-test-util)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![documentation](https://img.shields.io/badge/documentation-typedoc-blue)](https://chainsafe.github.io/lodestar/lodestar-spec-test-util)

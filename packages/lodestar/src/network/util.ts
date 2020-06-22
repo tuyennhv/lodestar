@@ -1,13 +1,15 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * @module network
  */
 
 import PeerId from "peer-id";
 import PeerInfo from "peer-info";
-import {promisify} from "es6-promisify";
-import {Shard} from "@chainsafe/eth2.0-types";
-
-import {RequestId, SHARD_SUBNET_COUNT, SHARD_ATTESTATION_TOPIC, BLOCK_TOPIC, ATTESTATION_TOPIC} from "../constants";
+import {Type} from "@chainsafe/ssz";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {Method, MethodResponseType, Methods, RequestId, RESP_TIMEOUT, TTFB_TIMEOUT} from "../constants";
+import {source as abortSource} from "abortable-iterator";
+import AbortController from "abort-controller";
 
 // req/resp
 
@@ -24,28 +26,11 @@ export function createResponseEvent(id: RequestId): string {
 }
 
 const REQ_PROTOCOL = "/eth2/beacon_chain/req/{method}/{version}/{encoding}";
-export function createRpcProtocol(method: string, encoding: string, version: number = 1): string {
+export function createRpcProtocol(method: string, encoding: string, version = 1): string {
   return REQ_PROTOCOL
     .replace("{method}", method)
     .replace("{encoding}", encoding)
     .replace("{version}", String(version));
-}
-
-// gossip
-
-export function blockTopic(encoding: string = "ssz"): string {
-  return `${BLOCK_TOPIC}/${encoding}`;
-}
-
-export function attestationTopic(encoding: string = "ssz"): string {
-  return `${ATTESTATION_TOPIC}/${encoding}`;
-}
-
-export function shardSubnetAttestationTopic(shard: Shard, encoding: string = "ssz"): string {
-  return `${SHARD_ATTESTATION_TOPIC.replace("{shard}", String(shard % SHARD_SUBNET_COUNT))}/${encoding}`;
-}
-export function shardAttestationTopic(shard: Shard): string {
-  return SHARD_ATTESTATION_TOPIC.replace("{shard}", String(shard));
 }
 
 // peers
@@ -61,13 +46,52 @@ export async function createPeerInfo(peerId: PeerId): Promise<PeerInfo> {
  * Return a fresh PeerId instance
  */
 export async function createPeerId(): Promise<PeerId> {
-  //keyType is missing in types
-  // @ts-ignore
-  return await promisify(PeerId.create)({bits: 256, keyType: "secp256k1"});
+  return await PeerId.create({bits: 256, keyType: "secp256k1"});
 }
 
 export async function initializePeerInfo(peerId: PeerId, multiaddrs: string[]): Promise<PeerInfo> {
   const peerInfo = await createPeerInfo(peerId);
   multiaddrs.forEach((ma) => peerInfo.multiaddrs.add(ma));
   return peerInfo;
+}
+
+export function getRequestMethodSSZType(
+  config: IBeaconConfig, method: Method
+): Type<any> {
+  return Methods[method].requestSSZType(config);
+}
+
+export function getResponseMethodSSZType(
+  config: IBeaconConfig, method: Method
+): Type<any> {
+  return Methods[method].responseSSZType(config);
+}
+
+export function isRequestOnly(method: Method): boolean {
+  return Methods[method].responseType === MethodResponseType.NoResponse;
+}
+
+export function isRequestSingleChunk(method: Method): boolean {
+  return Methods[method].responseType === MethodResponseType.SingleResponse;
+}
+
+export function eth2ResponseTimer<T>(): (source: AsyncIterable<T>) => AsyncGenerator<T> {
+  return (source) => {
+    return (async function*() {
+      const controller = new AbortController();
+      let responseTimer = setTimeout(() => controller.abort(), TTFB_TIMEOUT);
+      const renewTimer = (): void => {
+        clearTimeout(responseTimer);
+        responseTimer = setTimeout(() => controller.abort(), RESP_TIMEOUT);
+      };
+      const cancelTimer = (): void => {
+        clearTimeout(responseTimer);
+      };
+      for await(const item of abortSource(source, controller.signal, {abortMessage: "response timeout"})) {
+        renewTimer();
+        yield item;
+      }
+      cancelTimer();
+    })();
+  };
 }

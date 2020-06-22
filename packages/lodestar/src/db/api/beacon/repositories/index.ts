@@ -1,10 +1,17 @@
-export * from "./attestations";
-export * from "./attesterSlashing";
+export * from "./abstract";
+
+export * from "./badBlock";
 export * from "./block";
-export * from "./chain";
-export * from "./deposit";
-export * from "./merkleTree";
+export * from "./blockArchive";
+export * from "./stateArchive";
+
+export * from "./attestation";
+export * from "./aggregateAndProof";
+export * from "./attesterSlashing";
+export * from "./depositData";
 export * from "./proposerSlashing";
-export * from "./state";
-export * from "./transfer";
-export * from "./voluntaryExits";
+export * from "./voluntaryExit";
+
+export * from "./depositDataRoot";
+export * from "./eth1Data";
+

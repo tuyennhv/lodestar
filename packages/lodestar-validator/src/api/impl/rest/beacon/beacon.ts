@@ -1,26 +1,57 @@
-import {bytes32, Fork, SyncingStatus, BeaconBlock, BeaconState, number64, uint64} from "@chainsafe/eth2.0-types";
+import {
+  BeaconBlock,
+  BeaconState,
+  BLSPubkey,
+  Bytes32,
+  Fork,
+  Number64,
+  SyncingStatus,
+  Uint64,
+  Root,
+  ValidatorResponse
+} from "@chainsafe/lodestar-types";
 import {IBeaconApi} from "../../../interface/beacon";
 import {HttpClient} from "../../../../util";
-import {ILogger} from "../../../..";
+import {ILogger} from "@chainsafe/lodestar-utils/lib/logger";
+import {IBeaconConfig} from "@chainsafe/lodestar-config";
+import {Json, toHexString} from "@chainsafe/ssz";
 
 export class RestBeaconApi implements IBeaconApi {
 
-  private client: HttpClient;
+  private readonly client: HttpClient;
 
-  public constructor(restUrl: string, logger: ILogger) {
+  private readonly logger: ILogger;
+
+  private readonly config: IBeaconConfig;
+
+  public constructor(config: IBeaconConfig, restUrl: string, logger: ILogger) {
     this.client = new HttpClient({urlPrefix: `${restUrl}/node`}, {logger});
+    this.logger = logger;
+    this.config = config;
   }
 
-  public async getClientVersion(): Promise<bytes32> {
-    return this.client.get<bytes32>("/version");
+
+  public async getValidator(pubkey: BLSPubkey): Promise<ValidatorResponse|null> {
+    return this.config.types.ValidatorResponse.fromJson(
+      await this.client.get(`/validators/${toHexString(pubkey)}`)
+    );
   }
 
-  public async getFork(): Promise<{fork: Fork; chainId: uint64}> {
-    return this.client.get<{fork: Fork; chainId: uint64}>("/fork");
+  public async getClientVersion(): Promise<Bytes32> {
+    return this.client.get<Bytes32>("/version");
   }
 
-  public async getGenesisTime(): Promise<number64> {
-    return this.client.get<number64>("/genesis_time");
+  public async getFork(): Promise<{fork: Fork; chainId: Uint64; genesisValidatorsRoot: Root}> {
+    return this.config.types.ForkResponse.fromJson(await this.client.get<Json>("/fork"), {case: "snake"});
+  }
+
+  public async getGenesisTime(): Promise<Number64> {
+    try {
+      return await this.client.get<Number64>("/genesis_time");
+    } catch (e) {
+      this.logger.error("Failed to obtain genesis time", e);
+      return 0;
+    }
   }
 
   public async getSyncingStatus(): Promise<boolean | SyncingStatus> {

@@ -1,3 +1,4 @@
+.__testdb
 node_modules/
 lib
 docs
@@ -22,3 +23,5 @@ validators
 **/node_modules
 **/lib
 **/.nyc_output
+.tmp
+.vscode

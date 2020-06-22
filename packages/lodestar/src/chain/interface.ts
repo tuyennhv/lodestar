@@ -1,18 +1,32 @@
 import {EventEmitter} from "events";
+import StrictEventEmitter from "strict-event-emitter-types";
 
-import {Attestation, BeaconBlock, BeaconState, Checkpoint, Hash, Slot, uint16, uint64} from "@chainsafe/eth2.0-types";
+import {
+  Attestation,
+  BeaconState,
+  Checkpoint,
+  Root,
+  SignedBeaconBlock,
+  Uint16,
+  Uint64,
+  ForkDigest,
+  ENRForkID,
+  Slot,
+} from "@chainsafe/lodestar-types";
 
 import {ILMDGHOST} from "./forkChoice";
-import StrictEventEmitter from "strict-event-emitter-types";
-import {ProgressiveMerkleTree} from "@chainsafe/eth2.0-utils";
+import {IBeaconClock} from "./clock/interface";
+import {EpochContext} from "@chainsafe/lodestar-beacon-state-transition";
 
 export interface IChainEvents {
-  unknownBlockRoot: (root: Hash) => void;
-  processedBlock: (block: BeaconBlock) => void;
+  unknownBlockRoot: (root: Root) => void;
+  processedBlock: (signedBlock: SignedBeaconBlock) => void;
   processedCheckpoint: (checkPoint: Checkpoint) => void;
   processedAttestation: (attestation: Attestation) => void;
   justifiedCheckpoint: (checkpoint: Checkpoint) => void;
   finalizedCheckpoint: (checkpoint: Checkpoint) => void;
+  forkDigestChanged: () => void;
+  forkDigest: (forkDigest: ForkDigest) => void;
 }
 
 export type ChainEventEmitter = StrictEventEmitter<EventEmitter, IChainEvents>;
@@ -22,10 +36,11 @@ export type ChainEventEmitter = StrictEventEmitter<EventEmitter, IChainEvents>;
  * and applying the fork choice rule to update the chain head
  */
 export interface IBeaconChain extends ChainEventEmitter {
-  latestState: BeaconState|null;
   forkChoice: ILMDGHOST;
-  chainId: uint16;
-  networkId: uint64;
+  clock: IBeaconClock;
+  chainId: Uint16;
+  networkId: Uint64;
+  currentForkDigest: ForkDigest;
   /**
    * Start beacon chain processing
    */
@@ -37,6 +52,21 @@ export interface IBeaconChain extends ChainEventEmitter {
   stop(): Promise<void>;
 
   /**
+   * Return ENRForkID.
+   */
+  getENRForkID(): Promise<ENRForkID>;
+
+  getHeadState(): Promise<BeaconState|null>;
+
+  getHeadBlock(): Promise<SignedBeaconBlock|null>;
+
+  getFinalizedCheckpoint(): Promise<Checkpoint>;
+
+  getEpochContext(): EpochContext;
+
+  getBlockAtSlot(slot: Slot): Promise<SignedBeaconBlock|null>;
+
+  /**
    * Add attestation to the fork-choice rule
    */
   receiveAttestation(attestation: Attestation): Promise<void>;
@@ -44,27 +74,15 @@ export interface IBeaconChain extends ChainEventEmitter {
   /**
    * Pre-process and run the per slot state transition function
    */
-  receiveBlock(block: BeaconBlock, trusted?: boolean): Promise<void>;
+  receiveBlock(signedBlock: SignedBeaconBlock, trusted?: boolean): Promise<void>;
 
   /**
-   * Update the chain head using LMD GHOST
+   * Initialize the chain with a genesis state
    */
-  applyForkChoiceRule(): Promise<void>;
+  initializeBeaconChain(genesisState: BeaconState): Promise<void>;
+}
 
-  /**
-   * Ensure that the block is compliant with block processing validity conditions
-   */
-  isValidBlock(state: BeaconState, block: BeaconBlock): Promise<boolean>;
-
-  advanceState(slot?: Slot): Promise<void>;
-
-  /**
-   * Used for starting beacon chain with fake genesis state (dev, test, interop).
-   * Note: Invoke this before {@link start}
-   * @param genesisState
-   * @param merkleTree
-   */
-  initializeBeaconChain(genesisState: BeaconState, merkleTree: ProgressiveMerkleTree): Promise<void>;
-
-  isInitialized(): boolean;
+export interface IAttestationProcessor {
+  receiveBlock(signedBlock: SignedBeaconBlock, trusted?: boolean): Promise<void>;
+  receiveAttestation(attestation: Attestation): Promise<void>;
 }

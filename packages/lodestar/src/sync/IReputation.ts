@@ -1,22 +1,35 @@
 /**
  * @module sync
  */
-import {Hello} from "@chainsafe/eth2.0-types";
+import {Status, Metadata} from "@chainsafe/lodestar-types";
+import {ATTESTATION_SUBNET_COUNT, ReqRespEncoding} from "../constants";
 
 export interface IReputation {
-  latestHello: Hello | null;
+  latestStatus: Status | null;
+  latestMetadata: Metadata | null;
   score: number;
+  encoding: ReqRespEncoding | null;
 }
 
-export class ReputationStore {
+export interface IReputationStore {
+  add(peerId: string): IReputation;
+  remove(peerId: string): void;
+  get(peerId: string): IReputation;
+  getFromPeerInfo(peer: PeerInfo): IReputation;
+  getPeerIdsBySubnet(subnetStr: string): string[];
+}
+
+export class ReputationStore implements IReputationStore {
   private reputations: Map<string, IReputation>;
   public constructor() {
     this.reputations = new Map<string, IReputation>();
   }
   public add(peerId: string): IReputation {
     const reputation: IReputation = {
-      latestHello: null,
-      score: 0
+      latestStatus: null,
+      latestMetadata: null,
+      score: 0,
+      encoding: null,
     };
     this.reputations.set(peerId, reputation);
     return reputation;
@@ -30,5 +43,22 @@ export class ReputationStore {
 
   public getFromPeerInfo(peer: PeerInfo): IReputation {
     return this.get(peer.id.toB58String());
+  }
+
+  public getPeerIdsBySubnet(subnetStr: string): string[] {
+    if (!new RegExp("^\\d+$").test(subnetStr)) {
+      throw new Error(`Invalid subnet ${subnetStr}`);
+    }
+    const subnet = parseInt(subnetStr);
+    if (subnet < 0 || subnet >= ATTESTATION_SUBNET_COUNT) {
+      throw new Error(`Invalid subnet ${subnetStr}`);
+    }
+    const peerIds = [];
+    for (const [peerId, rep] of this.reputations) {
+      if (rep.latestMetadata && rep.latestMetadata.attnets[subnet]) {
+        peerIds.push(peerId);
+      }
+    }
+    return peerIds;
   }
 }

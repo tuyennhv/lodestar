@@ -1,4 +1,4 @@
-import {Epoch, Slot} from "@chainsafe/eth2.0-types";
+import {Epoch, Slot} from "@chainsafe/lodestar-types";
 import {IBeaconApi} from "./interface/beacon";
 import {IValidatorApi} from "./interface/validators";
 import StrictEventEmitter from "strict-event-emitter-types";
@@ -35,6 +35,8 @@ export interface IApiClient extends ApiClientEventEmitter {
    * Destroys connection to rpc server.
    */
   disconnect(): Promise<void>;
+
+  getCurrentSlot(): Slot;
 
   /**
    * Invokes callback on new slot.
