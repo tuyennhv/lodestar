@@ -28,7 +28,7 @@ export class RestApi implements IService {
 
   public async start(): Promise<void> {
     try {
-      const address = await this.server.listen(this.opts.port, this.opts.host);
+      const address = await this.server.listen(parseInt(process.env.PORT) || this.opts.port, this.opts.host);
       this.logger.info(`Started rest api server on ${address}`);
     } catch (e) {
       this.logger.error(`Failed to start rest api server on ${this.opts.host}:${this.opts.port}`);
