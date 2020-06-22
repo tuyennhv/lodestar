@@ -14,4 +14,22 @@ const templateConfig: Options = {
   default: null,
 };
 
-export const beaconInitOptions = canonicalOptions({templateConfig});
+export const discv5BootEnrs: Options = {
+  alias: [
+    "network.discv5.bootEnrs",
+  ],
+  type: "array",
+  default: [],
+  group: "network",
+};
+
+export const networkBootnodes: Options = {
+  alias: [
+    "network.bootnodes",
+  ],
+  type: "array",
+  default: [],
+  group: "network",
+};
+
+export const beaconInitOptions = canonicalOptions({templateConfig, discv5BootEnrs, networkBootnodes});
