@@ -10,6 +10,9 @@
   "scripts": {
     "postinstall": "lerna run clean && lerna run build",
     "build": "lerna run build",
+    "witti": "./packages/lodestar-cli/bin/lodecli beacon init --root-dir .witti",
+    "heroku-postbuild": "lerna run build && yarn witti",
+    "start": "./packages/lodestar-cli/bin/lodecli beacon run --root-dir .witti",
     "cli": "./packages/lodestar-cli/bin/lodestar"
   },
   "devDependencies": {
