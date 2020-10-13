@@ -49,6 +49,8 @@ export async function initHandler(options: IBeaconArgs & IGlobalArgs): Promise<v
     Object.assign(options, deepmerge(options, testnetConfig));
     if (options.weakSubjectivityStateFile) {
       const weakSubjectivityState = joinIfRelative(options.beaconDir, "weakSubjectivityState.ssz");
+      // hard code since we can't pass to package.json
+      options.weakSubjectivityStateFile = "https://github.com/tuyennhv/lodestar/raw/test-medalla/archivedstate_499648";
       await getRemoteFile(weakSubjectivityState, options.weakSubjectivityStateFile);
       options.weakSubjectivityStateFile = weakSubjectivityState;
     } else {

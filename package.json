@@ -18,7 +18,9 @@
     "lint": "lerna run lint --no-bail",
     "test:unit": "lerna run test:unit --no-bail",
     "test:e2e": "lerna run test:e2e --no-bail",
-    "cli": "node --trace-deprecation ./packages/lodestar-cli/bin/lodestar"
+    "cli": "node --trace-deprecation ./packages/lodestar-cli/bin/lodestar",
+    "heroku-postbuild": "lerna run build",
+    "start": "node --trace-deprecation ./packages/lodestar-cli/bin/lodestar beacon --testnet medalla --root-dir ./packages/lodestar-cli/.medalla --weak-subjectivity-state-file archivedstate_499648 --logger.chain.level debug --logger-sync.level verbose"
   },
   "devDependencies": {
     "@babel/cli": "^7.8.3",
