@@ -60,6 +60,7 @@ export class JsonRpcHttpClient implements IJsonRpcHttpClient {
    */
   private readonly jwtSecret?: Uint8Array;
   private readonly metrics: JsonRpcHttpClientMetrics | null;
+  private urlIndex = 0;
 
   constructor(
     private readonly urls: string[],
@@ -100,6 +101,10 @@ export class JsonRpcHttpClient implements IJsonRpcHttpClient {
     this.metrics = opts?.metrics ?? null;
 
     this.metrics?.configUrlsCount.set(urls.length);
+    setInterval(() => {
+      this.urlIndex = this.urlIndex ^ 1;
+      console.log("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@ switch urlIndex to", this.urlIndex, "url", this.urls[this.urlIndex]);
+    }, 5 * 60 * 1000);
   }
 
   /**
@@ -151,20 +156,30 @@ export class JsonRpcHttpClient implements IJsonRpcHttpClient {
     const routeId = opts?.routeId ?? "unknown";
     let lastError: Error | null = null;
 
-    for (let i = 0; i < this.urls.length; i++) {
-      if (i > 0) {
-        this.metrics?.requestUsedFallbackUrl.inc({routeId});
+    // for (let i = this.urlIndex; i < this.urls.length; i++) {
+    //   if (i > 0) {
+    //     this.metrics?.requestUsedFallbackUrl.inc({routeId});
+    //   }
+
+    //   try {
+    //     return await this.fetchJsonOneUrl<R, T>(this.urls[i], json, opts);
+    //   } catch (e) {
+    //     if (this.opts?.shouldNotFallback?.(e as Error)) {
+    //       throw e;
+    //     }
+
+    //     lastError = e as Error;
+    //   }
+    // }
+
+    try {
+      return await this.fetchJsonOneUrl<R, T>(this.urls[this.urlIndex], json, opts);
+    } catch (e) {
+      if (this.opts?.shouldNotFallback?.(e as Error)) {
+        throw e;
       }
 
-      try {
-        return await this.fetchJsonOneUrl<R, T>(this.urls[i], json, opts);
-      } catch (e) {
-        if (this.opts?.shouldNotFallback?.(e as Error)) {
-          throw e;
-        }
-
-        lastError = e as Error;
-      }
+      lastError = e as Error;
     }
 
     if (lastError !== null) {
@@ -188,7 +203,8 @@ export class JsonRpcHttpClient implements IJsonRpcHttpClient {
     // - request to http://missing-url.com/ failed, reason: getaddrinfo ENOTFOUND missing-url.com
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), opts?.timeout ?? this.opts?.timeout ?? REQUEST_TIMEOUT);
+    // const timeout = setTimeout(() => controller.abort(), opts?.timeout ?? this.opts?.timeout ?? REQUEST_TIMEOUT);
+    const timeout = setTimeout(() => controller.abort(), 60 * 1000);
 
     const onParentSignalAbort = (): void => controller.abort();
     this.opts?.signal?.addEventListener("abort", onParentSignalAbort, {once: true});

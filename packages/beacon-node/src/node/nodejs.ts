@@ -185,7 +185,10 @@ export class BeaconNode {
         logger: logger.child({module: LoggerModule.eth1}),
         signal,
       }),
-      executionEngine: initializeExecutionEngine(opts.executionEngine, {metrics, signal}),
+      executionEngine: initializeExecutionEngine({
+        mode: "mock",
+        genesisBlockHash: "0x4d611d5b93fdab69013a7f0a2f961caca0c853f87cfe9595fe50038163079360",
+      }, {metrics, signal}),
       executionBuilder: opts.executionBuilder.enabled
         ? initializeExecutionBuilder(opts.executionBuilder, config)
         : undefined,
