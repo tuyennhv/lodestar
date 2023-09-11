@@ -252,7 +252,9 @@ export class EpochCache {
     // syncPubkeys here to ensure EpochCacheImmutableData is popualted before computing the rest of caches
     // - computeSyncCommitteeCache() needs a fully populated pubkey2index cache
     if (!opts?.skipSyncPubkeys) {
+      const startTime = Date.now();
       syncPubkeys(state, pubkey2index, index2pubkey);
+      console.log("   ### syncPubkeys", Date.now() - startTime, "ms");
     }
 
     const currentEpoch = computeEpochAtSlot(state.slot);
