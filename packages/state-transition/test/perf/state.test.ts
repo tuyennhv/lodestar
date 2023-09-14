@@ -4,9 +4,11 @@ import {itBench} from "@dapplion/benchmark";
 import {config as defaultChainConfig} from "@lodestar/config/default";
 import {bytesToInt} from "@lodestar/utils";
 import {ChainForkConfig, createBeaconConfig} from "@lodestar/config";
-import {allForks} from "@lodestar/types";
+import {allForks, capella, ssz} from "@lodestar/types";
 import {createCachedBeaconState} from "../../src/cache/stateCache.js";
 import {PubkeyIndexMap} from "../../src/cache/pubkeyCache.js";
+import {SLOTS_PER_EPOCH} from "@lodestar/params";
+import {CompositeViewDU} from "@chainsafe/ssz";
 
 const SLOT_BYTE_COUNT = 8;
 const SLOT_BYTES_POSITION_IN_STATE = 40;
@@ -19,7 +21,9 @@ describe("state test", function () {
   console.log("@@@ number of bytes", data.length);
   let startTime = Date.now();
   const heapUsed = process.memoryUsage().heapUsed;
-  const state = getStateTypeFromBytes(defaultChainConfig, data).deserializeToViewDU(data);
+  const stateType = getStateTypeFromBytes(defaultChainConfig, data);
+  console.log("@@@ state type", stateType.typeName);
+  const state = stateType.deserializeToViewDU(data);
   console.log(
     "@@@ loaded state slot to TreeViewDU",
     state.slot,
@@ -48,12 +52,12 @@ describe("state test", function () {
     bytesToSize(process.memoryUsage().heapUsed - heapUsed)
   );
 
-  itBench({
-    id: "deserialize state",
-    fn: () => {
-      getStateTypeFromBytes(defaultChainConfig, data).deserializeToViewDU(data);
-    },
-  });
+  // itBench({
+  //   id: "deserialize state",
+  //   fn: () => {
+  //     getStateTypeFromBytes(defaultChainConfig, data).deserializeToViewDU(data);
+  //   },
+  // });
 });
 
 function getStateTypeFromBytes(
