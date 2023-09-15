@@ -137,16 +137,20 @@ export function createCachedBeaconState<T extends BeaconStateAllForks>(
   immutableData: EpochCacheImmutableData,
   opts?: EpochCacheOpts
 ): T & BeaconStateCache {
-  const start = Date.now();
+  let start = Date.now();
   const epochCache = EpochCache.createFromState(state, immutableData, opts);
-  console.log("@@@ EpochCache.createFromState", Date.now() - start, "ms");
-  return getCachedBeaconState(state, {
+  console.log("   ### EpochCache.createFromState", Date.now() - start, "ms");
+  start = Date.now();
+  const cachedState = getCachedBeaconState(state, {
     config: immutableData.config,
     epochCtx: epochCache,
     clonedCount: 0,
     clonedCountWithTransferCache: 0,
     createdWithTransferCache: false,
   });
+  console.log("   ### getCachedBeaconState", Date.now() - start, "ms");
+
+  return cachedState;
 }
 
 /**

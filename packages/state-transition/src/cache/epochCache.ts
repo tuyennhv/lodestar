@@ -45,11 +45,15 @@ export type EpochCacheImmutableData = {
   config: BeaconConfig;
   pubkey2index: PubkeyIndexMap;
   index2pubkey: Index2PubkeyCache;
+  previousShuffling?: EpochShuffling;
+  currentShuffling?: EpochShuffling;
+  nextShuffling?: EpochShuffling;
 };
 
 export type EpochCacheOpts = {
   skipSyncCommitteeCache?: boolean;
   skipSyncPubkeys?: boolean;
+  skipComputeShuffling?: boolean;
 };
 
 /** Defers computing proposers by persisting only the seed, and dropping it once indexes are computed */
@@ -246,13 +250,23 @@ export class EpochCache {
    */
   static createFromState(
     state: BeaconStateAllForks,
-    {config, pubkey2index, index2pubkey}: EpochCacheImmutableData,
+    {
+      config,
+      pubkey2index,
+      index2pubkey,
+      previousShuffling: previousShufflingIn,
+      currentShuffling: currentShufflingIn,
+      nextShuffling: nextShufflingIn,
+    }: EpochCacheImmutableData,
     opts?: EpochCacheOpts
   ): EpochCache {
+    if ((!previousShufflingIn || !currentShufflingIn || !nextShufflingIn) && opts?.skipComputeShuffling) {
+      throw Error("skipComputeShuffling requires previousShuffling, currentShuffling, nextShuffling");
+    }
     // syncPubkeys here to ensure EpochCacheImmutableData is popualted before computing the rest of caches
     // - computeSyncCommitteeCache() needs a fully populated pubkey2index cache
+    let startTime = Date.now();
     if (!opts?.skipSyncPubkeys) {
-      const startTime = Date.now();
       syncPubkeys(state, pubkey2index, index2pubkey);
       console.log("   ### syncPubkeys", Date.now() - startTime, "ms");
     }
@@ -274,22 +288,25 @@ export class EpochCache {
     const currentActiveIndices: ValidatorIndex[] = [];
     const nextActiveIndices: ValidatorIndex[] = [];
 
+    startTime = Date.now();
     for (let i = 0; i < validatorCount; i++) {
       const validator = validators[i];
 
       // Note: Not usable for fork-choice balances since in-active validators are not zero'ed
       effectiveBalanceIncrements[i] = Math.floor(validator.effectiveBalance / EFFECTIVE_BALANCE_INCREMENT);
 
-      if (isActiveValidator(validator, previousEpoch)) {
-        previousActiveIndices.push(i);
-      }
-      if (isActiveValidator(validator, currentEpoch)) {
-        currentActiveIndices.push(i);
-        // We track totalActiveBalanceIncrements as ETH to fit total network balance in a JS number (53 bits)
-        totalActiveBalanceIncrements += effectiveBalanceIncrements[i];
-      }
-      if (isActiveValidator(validator, nextEpoch)) {
-        nextActiveIndices.push(i);
+      if (!opts?.skipComputeShuffling) {
+        if (isActiveValidator(validator, previousEpoch)) {
+          previousActiveIndices.push(i);
+        }
+        if (isActiveValidator(validator, currentEpoch)) {
+          currentActiveIndices.push(i);
+          // We track totalActiveBalanceIncrements as ETH to fit total network balance in a JS number (53 bits)
+          totalActiveBalanceIncrements += effectiveBalanceIncrements[i];
+        }
+        if (isActiveValidator(validator, nextEpoch)) {
+          nextActiveIndices.push(i);
+        }
       }
 
       const {exitEpoch} = validator;
@@ -302,6 +319,7 @@ export class EpochCache {
         }
       }
     }
+    console.log("   ### loop validators compute active indices", Date.now() - startTime, "ms");
 
     // Spec: `EFFECTIVE_BALANCE_INCREMENT` Gwei minimum to avoid divisions by zero
     // 1 = 1 unit of EFFECTIVE_BALANCE_INCREMENT
@@ -311,12 +329,20 @@ export class EpochCache {
       throw Error("totalActiveBalanceIncrements >= Number.MAX_SAFE_INTEGER. MAX_EFFECTIVE_BALANCE is too low.");
     }
 
-    const currentShuffling = computeEpochShuffling(state, currentActiveIndices, currentEpoch);
-    const previousShuffling = isGenesis
+    startTime = Date.now();
+    const currentShuffling = opts?.skipComputeShuffling ? currentShufflingIn : computeEpochShuffling(state, currentActiveIndices, currentEpoch);
+    const previousShuffling = opts?.skipComputeShuffling ? previousShufflingIn : isGenesis
       ? currentShuffling
       : computeEpochShuffling(state, previousActiveIndices, previousEpoch);
-    const nextShuffling = computeEpochShuffling(state, nextActiveIndices, nextEpoch);
+    const nextShuffling = opts?.skipComputeShuffling ? nextShufflingIn : computeEpochShuffling(state, nextActiveIndices, nextEpoch);
+    console.log("   ### compute shufflings in", Date.now() - startTime, "ms");
 
+    if (!previousShuffling || !currentShuffling || !nextShuffling) {
+      // should not happen
+      throw Error("Shuffling is not defined");
+    }
+
+    startTime = Date.now();
     const currentProposerSeed = getSeed(state, currentEpoch, DOMAIN_BEACON_PROPOSER);
 
     // Allow to create CachedBeaconState for empty states, or no active validators
@@ -324,6 +350,7 @@ export class EpochCache {
       currentShuffling.activeIndices.length > 0
         ? computeProposers(currentProposerSeed, currentShuffling, effectiveBalanceIncrements)
         : [];
+    console.log("   ### getSeeds and proposers in", Date.now() - startTime, "ms");
 
     const proposersNextEpoch: ProposersDeferred = {
       computed: false,
@@ -342,6 +369,7 @@ export class EpochCache {
     let currentSyncCommitteeIndexed: SyncCommitteeCache;
     let nextSyncCommitteeIndexed: SyncCommitteeCache;
     // Allow to skip populating sync committee for initializeBeaconStateFromEth1()
+    startTime = Date.now();
     if (afterAltairFork && !opts?.skipSyncCommitteeCache) {
       const altairState = state as BeaconStateAltair;
       currentSyncCommitteeIndexed = computeSyncCommitteeCache(altairState.currentSyncCommittee, pubkey2index);
@@ -350,6 +378,7 @@ export class EpochCache {
       currentSyncCommitteeIndexed = new SyncCommitteeCacheEmpty();
       nextSyncCommitteeIndexed = new SyncCommitteeCacheEmpty();
     }
+    console.log("   ### compute sync committee cache in", Date.now() - startTime, "ms");
 
     // Precompute churnLimit for efficient initiateValidatorExit() during block proposing MUST be recompute everytime the
     // active validator indices set changes in size. Validators change active status only when:
@@ -377,6 +406,7 @@ export class EpochCache {
     let currentTargetUnslashedBalanceIncrements = 0;
 
     if (config.getForkSeq(state.slot) >= ForkSeq.altair) {
+      const startTime = Date.now();
       const {previousEpochParticipation, currentEpochParticipation} = state as BeaconStateAltair;
       previousTargetUnslashedBalanceIncrements = sumTargetUnslashedBalanceIncrements(
         previousEpochParticipation.getAll(),
@@ -388,6 +418,7 @@ export class EpochCache {
         currentEpoch,
         validators
       );
+      console.log("   ### sumTargetUnslashedBalanceIncrements", Date.now() - startTime, "ms");
     }
 
     return new EpochCache({

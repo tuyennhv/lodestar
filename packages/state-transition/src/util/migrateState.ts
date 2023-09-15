@@ -5,11 +5,12 @@ const stateType = ssz.capella.BeaconState;
 const validatorBytesSize = 121;
 export function migrateState(
   state: CompositeViewDU<typeof ssz.capella.BeaconState>,
-  data: Uint8Array
+  data: Uint8Array,
+  modifiedValidators: number[] = []
 ): CompositeViewDU<typeof ssz.capella.BeaconState> {
   const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const fieldRanges = stateType.getFieldRanges(dataView, 0, data.length);
-  const clonedState = loadValidators(state, data);
+  const clonedState = loadValidators(state, data, modifiedValidators);
   const allFields = Object.keys(stateType.fields);
   // genesisTime, could skip
   // genesisValidatorsRoot, could skip
@@ -187,7 +188,8 @@ export function migrateState(
 
 function loadValidators(
   seedState: CompositeViewDU<typeof ssz.capella.BeaconState>,
-  data: Uint8Array
+  data: Uint8Array,
+  modifiedValidators: number[] = [],
 ): CompositeViewDU<typeof ssz.capella.BeaconState> {
   const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const fieldRanges = stateType.getFieldRanges(dataView, 0, data.length);
@@ -201,7 +203,6 @@ function loadValidators(
   const newState = seedState.clone();
   const validatorsBytes = seedState.validators.serialize();
   const validatorsBytes2 = data.slice(validatorsRange.start, validatorsRange.end);
-  const modifiedValidators: number[] = [];
   findModifiedValidators(
     isMoreValidator ? validatorsBytes : validatorsBytes.subarray(0, minValidatorCount * validatorBytesSize),
     isMoreValidator ? validatorsBytes2.subarray(0, minValidatorCount * validatorBytesSize) : validatorsBytes2,
@@ -222,6 +223,7 @@ function loadValidators(
           validatorsBytes2.subarray(validatorIndex * validatorBytesSize, (validatorIndex + 1) * validatorBytesSize)
         )
       );
+      modifiedValidators.push(validatorIndex);
     }
   } else {
     newState.validators = newState.validators.sliceTo(newValidatorCount - 1);
