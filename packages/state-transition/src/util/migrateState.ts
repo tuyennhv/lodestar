@@ -123,9 +123,10 @@ export function migrateState(
   // TODO: this takes ~500 to hashTreeRoot, should we only update individual field?
   const inactivityScoresIndex = allFields.indexOf("inactivityScores");
   const inactivityScoresRange = fieldRanges[inactivityScoresIndex];
-  clonedState.inactivityScores = stateType.fields.inactivityScores.deserializeToViewDU(
-    data.subarray(inactivityScoresRange.start, inactivityScoresRange.end)
-  );
+  // clonedState.inactivityScores = stateType.fields.inactivityScores.deserializeToViewDU(
+  //   data.subarray(inactivityScoresRange.start, inactivityScoresRange.end)
+  // );
+  loadInactivityScores(clonedState, data.subarray(inactivityScoresRange.start, inactivityScoresRange.end));
   // TODO: 2 states could be in same sync committee, do a check before update
   // this takes ~200ms to hashTreeRoot
   // currentSyncCommittee
@@ -186,10 +187,48 @@ export function migrateState(
   return clonedState;
 }
 
+// state store inactivity scores of old seed state, we need to update it
+function loadInactivityScores(
+  state: CompositeViewDU<typeof ssz.capella.BeaconState>,
+  inactivityScoresBytes: Uint8Array
+): void {
+  const oldValidator = state.inactivityScores.length;
+  // UintNum64 = 8 bytes
+  const newValidator = inactivityScoresBytes.length / 8;
+  const minValidator = Math.min(oldValidator, newValidator);
+  const oldInactivityScores = state.inactivityScores.serialize();
+  const isMoreValidator = newValidator >= oldValidator;
+  const modifiedValidators: number[] = [];
+  findModifiedInactivityScores(
+    isMoreValidator ? oldInactivityScores : oldInactivityScores.subarray(0, minValidator * 8),
+    isMoreValidator ? inactivityScoresBytes.subarray(0, minValidator * 8) : inactivityScoresBytes,
+    modifiedValidators
+  );
+
+  for (const validatorIndex of modifiedValidators) {
+    state.inactivityScores.set(
+      validatorIndex,
+      ssz.UintNum64.deserialize(inactivityScoresBytes.subarray(validatorIndex * 8, (validatorIndex + 1) * 8))
+    );
+  }
+
+  if (isMoreValidator) {
+    // add new inactivityScores
+    for (let validatorIndex = oldValidator; validatorIndex < newValidator; validatorIndex++) {
+      state.inactivityScores.push(
+        ssz.UintNum64.deserialize(inactivityScoresBytes.subarray(validatorIndex * 8, (validatorIndex + 1) * 8))
+      );
+    }
+  } else {
+    // TODO: implement this in ssz?
+    // state.inactivityScores = state.inactivityScores.sliceTo(newValidator - 1);
+  }
+}
+
 function loadValidators(
   seedState: CompositeViewDU<typeof ssz.capella.BeaconState>,
   data: Uint8Array,
-  modifiedValidators: number[] = [],
+  modifiedValidators: number[] = []
 ): CompositeViewDU<typeof ssz.capella.BeaconState> {
   const dataView = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const fieldRanges = stateType.getFieldRanges(dataView, 0, data.length);
@@ -211,7 +250,9 @@ function loadValidators(
   for (const i of modifiedValidators) {
     newState.validators.set(
       i,
-      ssz.phase0.Validator.deserializeToViewDU(validatorsBytes2.subarray(i * validatorBytesSize, (i + 1) * validatorBytesSize))
+      ssz.phase0.Validator.deserializeToViewDU(
+        validatorsBytes2.subarray(i * validatorBytesSize, (i + 1) * validatorBytesSize)
+      )
     );
   }
 
@@ -264,6 +305,48 @@ function findModifiedValidators(
   findModifiedValidators(
     validatorsBytes.subarray(halfValidator * validatorBytesSize),
     validatorsBytes2.subarray(halfValidator * validatorBytesSize),
+    modifiedValidators,
+    validatorOffset + halfValidator
+  );
+}
+
+// as monitored on mainnet, inactivityScores are not changed much and they are mostly 0
+function findModifiedInactivityScores(
+  inactivityScoresBytes: Uint8Array,
+  inactivityScoresBytes2: Uint8Array,
+  modifiedValidators: number[],
+  validatorOffset = 0
+): void {
+  if (inactivityScoresBytes.length !== inactivityScoresBytes2.length) {
+    throw new Error(
+      "inactivityScoresBytes.length !== inactivityScoresBytes2.length " +
+        inactivityScoresBytes.length +
+        " vs " +
+        inactivityScoresBytes2.length
+    );
+  }
+
+  if (Buffer.compare(inactivityScoresBytes, inactivityScoresBytes2) === 0) {
+    return;
+  }
+
+  // UintNum64 = 8 bytes
+  if (inactivityScoresBytes.length === 8) {
+    modifiedValidators.push(validatorOffset);
+    return;
+  }
+
+  const numValidator = Math.floor(inactivityScoresBytes.length / 8);
+  const halfValidator = Math.floor(numValidator / 2);
+  findModifiedInactivityScores(
+    inactivityScoresBytes.subarray(0, halfValidator * 8),
+    inactivityScoresBytes2.subarray(0, halfValidator * 8),
+    modifiedValidators,
+    validatorOffset
+  );
+  findModifiedInactivityScores(
+    inactivityScoresBytes.subarray(halfValidator * 8),
+    inactivityScoresBytes2.subarray(halfValidator * 8),
     modifiedValidators,
     validatorOffset + halfValidator
   );
