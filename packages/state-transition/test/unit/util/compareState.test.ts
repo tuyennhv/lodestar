@@ -8,10 +8,11 @@ describe("compareState", function () {
   const stateType = ssz.capella.BeaconState;
 
   const folder = "/Users/tuyennguyen/tuyen/state_migration";
-  const data = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_6543072.ssz")));
-  const data2 = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_Sep_15.ssz")));
+  const data = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_7335360.ssz")));
+  const data2 = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_7335296.ssz")));
   const state = stateType.deserializeToViewDU(data);
   const state2 = stateType.deserializeToViewDU(data2);
+  console.log("@@@ slot", state.slot, state2.slot);
   const validatorCount = state.validators.length;
   const validatorCount2 = state2.validators.length;
   const minValidator = Math.min(validatorCount, validatorCount2);

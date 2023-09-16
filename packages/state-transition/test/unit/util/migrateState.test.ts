@@ -15,7 +15,7 @@ describe("migrateState", function () {
   const stateType = ssz.capella.BeaconState;
 
   const folder = "/Users/tuyennguyen/tuyen/state_migration";
-  const data = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_6543072.ssz")));
+  const data = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_7335296.ssz")));
   console.log("@@@ number of bytes", data.length);
   let startTime = Date.now();
   const heapUsed = process.memoryUsage().heapUsed;
@@ -46,13 +46,19 @@ describe("migrateState", function () {
   });
   console.log("@@@ createCachedBeaconState in", Date.now() - startTime, "ms");
 
-  it("migrate same state", () => {
+  const newStateBytes = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_7335360.ssz")));
+  const newState = stateType.deserializeToViewDU(newStateBytes);
+  startTime = Date.now();
+  const newStateRoot = newState.hashTreeRoot();
+  console.log("@@@ hashTreeRoot of new state in", Date.now() - startTime, "ms");
+
+  it.only(`migrate state ${newState.slot - seedState.slot} slots difference`, () => {
     let startTime = Date.now();
     const modifiedValidators: number[] = [];
-    const newState = migrateState(seedState, data, modifiedValidators);
+    const migratedState = migrateState(seedState, newStateBytes, modifiedValidators);
     console.log("@@@ migrate state in", Date.now() - startTime, "ms");
     startTime = Date.now();
-    expect(ssz.Root.equals(newState.hashTreeRoot(), stateRoot)).to.be.true;
+    expect(ssz.Root.equals(migratedState.hashTreeRoot(), newStateRoot)).to.be.true;
     console.log("@@@ hashTreeRoot of new state in", Date.now() - startTime, "ms");
     startTime = Date.now();
     // Get the validators sub tree once for all the loop
@@ -78,6 +84,7 @@ describe("migrateState", function () {
       {skipSyncPubkeys: true, skipComputeShuffling: true}
     );
   });
+
 });
 
 function bytesToSize(bytes: number): string {
