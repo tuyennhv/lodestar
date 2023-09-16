@@ -9,6 +9,7 @@ import {createBeaconConfig} from "@lodestar/config";
 import {migrateState} from "../../../src/util/migrateState.js";
 import {createCachedBeaconState} from "../../../src/cache/stateCache.js";
 import {Index2PubkeyCache, PubkeyIndexMap} from "../../../src/cache/pubkeyCache.js";
+import {fromHexString, toHexString} from "@chainsafe/ssz";
 
 describe("migrateState", function () {
   this.timeout(0);
@@ -30,10 +31,10 @@ describe("migrateState", function () {
     "heapUse",
     bytesToSize(process.memoryUsage().heapUsed - heapUsed)
   );
-  // cache all HashObjects
   startTime = Date.now();
-  const stateRoot = seedState.hashTreeRoot();
-  console.log("@@@ hashTreeRoot of old state in", Date.now() - startTime, "ms");
+  // cache all HashObjects
+  seedState.hashTreeRoot();
+  console.log("@@@ hashTreeRoot of seed state in", Date.now() - startTime, "ms");
   const config = createBeaconConfig(defaultChainConfig, seedState.genesisValidatorsRoot);
   startTime = Date.now();
   // TODO: EIP-6110 - need to create 2 separate caches?
@@ -47,12 +48,18 @@ describe("migrateState", function () {
   console.log("@@@ createCachedBeaconState in", Date.now() - startTime, "ms");
 
   const newStateBytes = Uint8Array.from(fs.readFileSync(path.join(folder, "mainnet_state_7335360.ssz")));
-  const newState = stateType.deserializeToViewDU(newStateBytes);
-  startTime = Date.now();
-  const newStateRoot = newState.hashTreeRoot();
-  console.log("@@@ hashTreeRoot of new state in", Date.now() - startTime, "ms");
+  // const stateRoot6543072 = fromHexString("0xcf0e3c93b080d1c870b9052031f77e08aecbbbba5e4e7b1898b108d76c981a31");
+  // const stateRoot7335296 = fromHexString("0xc63b580b63b78c83693ff2b8897cf0e4fcbc46b8a2eab60a090b78ced36afd93");
+  const stateRoot7335360 = fromHexString("0xaeb2f977a1502967e09394e81b8bcfdd5a077af82b99deea0dcd3698568efbeb");
+  const newStateRoot = stateRoot7335360;
+  // IMPORTANT: should not load a new separate tree (enable the code below) or the number is not correct (too bad)
+  // const newState = stateType.deserializeToViewDU(newStateBytes);
+  // startTime = Date.now();
+  // const newStateRoot = newState.hashTreeRoot();
+  // console.log("state root of state", toHexString(newStateRoot));
+  // console.log("@@@ hashTreeRoot of new state in", Date.now() - startTime, "ms");
 
-  it.only(`migrate state ${newState.slot - seedState.slot} slots difference`, () => {
+  it.only(`migrate state from slot ${seedState.slot} 64 slots difference`, () => {
     let startTime = Date.now();
     const modifiedValidators: number[] = [];
     const migratedState = migrateState(seedState, newStateBytes, modifiedValidators);
@@ -62,7 +69,7 @@ describe("migrateState", function () {
     console.log("@@@ hashTreeRoot of new state in", Date.now() - startTime, "ms");
     startTime = Date.now();
     // Get the validators sub tree once for all the loop
-    const validators = newState.validators;
+    const validators = migratedState.validators;
     for (const validatorIndex of modifiedValidators) {
       const validator = validators.getReadonly(validatorIndex);
       const pubkey = validator.pubkey;
@@ -70,7 +77,7 @@ describe("migrateState", function () {
       index2pubkey[validatorIndex] = bls.PublicKey.fromBytes(pubkey, CoordType.jacobian);
     }
     createCachedBeaconState(
-      newState,
+      migratedState,
       {
         config,
         pubkey2index,
