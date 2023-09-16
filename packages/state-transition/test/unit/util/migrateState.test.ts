@@ -64,6 +64,9 @@ describe("migrateState", function () {
    * My Mac M1 Pro 17:30 Sep 16 2023
    * ✔ migrate state from slot 7335296 64 slots difference                0.4225908 ops/s    2.366355  s/op        -         14 runs   35.9 s
    * ✔ migrate state from slot 7327776 1 day difference                   0.3415936 ops/s    2.927455  s/op        -         17 runs   52.6 s
+   * Memory diff:
+   * - 64 slots: 104.01 MB
+   * - 1 day: 113.49 MB
    */
   itBench(`migrate state from slot ${seedState.slot} 64 slots difference`, () => {
     let startTime = Date.now();
