@@ -10,6 +10,7 @@ import {migrateState} from "../../../src/util/migrateState.js";
 import {createCachedBeaconState} from "../../../src/cache/stateCache.js";
 import {Index2PubkeyCache, PubkeyIndexMap} from "../../../src/cache/pubkeyCache.js";
 import {fromHexString, toHexString} from "@chainsafe/ssz";
+import {itBench} from "@dapplion/benchmark";
 
 describe("migrateState", function () {
   this.timeout(0);
@@ -59,7 +60,12 @@ describe("migrateState", function () {
   // console.log("state root of state", toHexString(newStateRoot));
   // console.log("@@@ hashTreeRoot of new state in", Date.now() - startTime, "ms");
 
-  it.only(`migrate state from slot ${seedState.slot} 64 slots difference`, () => {
+  /**
+   * My Mac M1 Pro 17:30 Sep 16 2023
+   * ✔ migrate state from slot 7335296 64 slots difference                0.4225908 ops/s    2.366355  s/op        -         14 runs   35.9 s
+   * ✔ migrate state from slot 7327776 1 day difference                   0.3415936 ops/s    2.927455  s/op        -         17 runs   52.6 s
+   */
+  itBench(`migrate state from slot ${seedState.slot} 64 slots difference`, () => {
     let startTime = Date.now();
     const modifiedValidators: number[] = [];
     const migratedState = migrateState(seedState, newStateBytes, modifiedValidators);
