@@ -328,20 +328,20 @@ export async function importBlock(
      */
     const safeBlockHash = this.forkChoice.getJustifiedBlock().executionPayloadBlockHash ?? ZERO_HASH_HEX;
     const finalizedBlockHash = this.forkChoice.getFinalizedBlock().executionPayloadBlockHash ?? ZERO_HASH_HEX;
-    if (headBlockHash !== ZERO_HASH_HEX) {
-      this.executionEngine
-        .notifyForkchoiceUpdate(
-          this.config.getForkName(this.forkChoice.getHead().slot),
-          headBlockHash,
-          safeBlockHash,
-          finalizedBlockHash
-        )
-        .catch((e) => {
-          if (!isErrorAborted(e) && !isQueueErrorAborted(e)) {
-            this.logger.error("Error pushing notifyForkchoiceUpdate()", {headBlockHash, finalizedBlockHash}, e);
-          }
-        });
-    }
+    // if (headBlockHash !== ZERO_HASH_HEX) {
+    //   this.executionEngine
+    //     .notifyForkchoiceUpdate(
+    //       this.config.getForkName(this.forkChoice.getHead().slot),
+    //       headBlockHash,
+    //       safeBlockHash,
+    //       finalizedBlockHash
+    //     )
+    //     .catch((e) => {
+    //       if (!isErrorAborted(e) && !isQueueErrorAborted(e)) {
+    //         this.logger.error("Error pushing notifyForkchoiceUpdate()", {headBlockHash, finalizedBlockHash}, e);
+    //       }
+    //     });
+    // }
   }
 
   if (!isStateValidatorsNodesPopulated(postState)) {

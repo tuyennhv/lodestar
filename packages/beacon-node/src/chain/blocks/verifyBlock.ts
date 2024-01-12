@@ -86,6 +86,9 @@ export async function verifyBlocksInEpoch(
   }
 
   const abortController = new AbortController();
+  // skip verify execution payload and block signatures
+  const skipVerifyExecutionPayload = true;
+  const skipVerifyBlockSignatures = true;
 
   try {
     // batch all I/O operations to reduce overhead
@@ -96,11 +99,11 @@ export async function verifyBlocksInEpoch(
       {verifySignaturesTime},
     ] = await Promise.all([
       // Execution payloads
-      opts.skipVerifyExecutionPayload !== true
+      skipVerifyExecutionPayload !== true
         ? verifyBlocksExecutionPayload(this, parentBlock, blocks, preState0, abortController.signal, opts)
         : Promise.resolve({
             execAborted: null,
-            executionStatuses: blocks.map((_blk) => ExecutionStatus.Syncing),
+            executionStatuses: blocks.map((_blk) => ExecutionStatus.Valid),
             mergeBlockFound: null,
           } as SegmentExecStatus),
 
@@ -121,7 +124,7 @@ export async function verifyBlocksInEpoch(
       ),
 
       // All signatures at once
-      opts.skipVerifyBlockSignatures !== true
+      skipVerifyBlockSignatures !== true
         ? verifyBlocksSignatures(this.bls, this.logger, this.metrics, preState0, blocks, opts)
         : Promise.resolve({verifySignaturesTime: Date.now()}),
 

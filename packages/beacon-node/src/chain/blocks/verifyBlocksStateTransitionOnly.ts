@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import {
   CachedBeaconStateAllForks,
   stateTransition,
@@ -57,6 +58,12 @@ export async function verifyBlocksStateTransitionOnly(
       },
       metrics
     );
+
+    if ([8143135, 8143136].includes(postState.slot)) {
+      logger.info("@@@ persisting state slot", {slot: postState.slot});
+      fs.writeFileSync(`./mainnet_state_${postState.slot}.ssz`, postState.serialize());
+      logger.info("@@@ persisted state slot", {slot: postState.slot});
+    }
 
     const hashTreeRootTimer = metrics?.stateHashTreeRootTime.startTimer({
       source: StateHashTreeRootSource.blockTransition,
